@@ -202,6 +202,26 @@ def test_conversation_feedback_loop_is_necessary():
     assert "llm-in-loop" not in rule_set(src)
 
 
+def test_already_batched_loop_is_necessary():
+    # regression (found on a real repo, pavelhorak/Prospekt): a loop over batches
+    # is already the batched solution; do not tell it to batch
+    src = (
+        "for batch in batches:\n"
+        "    client.chat.completions.create(model='m', messages=[{'role':'user','content': str(batch)}])"
+    )
+    assert "llm-in-loop" not in rule_set(src)
+
+
+def test_chunk_loop_is_necessary():
+    # regression (found on a real repo, scooter7/carnegieseo): chunking a big
+    # document to fit the context window is necessary, not per-item waste
+    src = (
+        "for chunk in html_chunks:\n"
+        "    client.chat.completions.create(model='m', messages=[{'role':'user','content': chunk}])"
+    )
+    assert "llm-in-loop" not in rule_set(src)
+
+
 # --- precision: a normal, justified LLM call produces zero findings ----------
 
 def test_normal_dynamic_call_is_silent():

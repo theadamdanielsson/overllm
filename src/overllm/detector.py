@@ -487,6 +487,18 @@ def _loop_has_feedback(loop: ast.AST, call: ast.Call) -> bool:
     return False
 
 
+def _looks_batched(loop: ast.AST) -> bool:
+    # The loop already iterates over batches/chunks/groups, so it is not one
+    # call per item -- flagging it would tell already-batched code to batch.
+    names: list[str] = []
+    for part in (loop.target, loop.iter):
+        for n in ast.walk(part):
+            if isinstance(n, ast.Name):
+                names.append(n.id)
+    low = " ".join(names).lower()
+    return any(k in low for k in ("batch", "chunk", "group"))
+
+
 def _loop_kind(node: ast.Call, parents: dict[int, ast.AST]) -> str | None:
     """Classify the enclosing loop.
 
@@ -504,7 +516,7 @@ def _loop_kind(node: ast.Call, parents: dict[int, ast.AST]) -> str | None:
         it = loop.iter
         if isinstance(it, ast.Call) and isinstance(it.func, ast.Name) and it.func.id == "range":
             return "necessary"
-        if _loop_has_feedback(loop, node):
+        if _looks_batched(loop) or _loop_has_feedback(loop, node):
             return "necessary"
         return "batchable"
     return "batchable"  # comprehension

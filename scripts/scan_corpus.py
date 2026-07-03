@@ -24,6 +24,7 @@ import sys
 import warnings
 from pathlib import Path
 
+from overllm.config import DEFAULT_EXCLUDES
 from overllm.detector import find_llm_calls
 from overllm.rules import run_rules
 
@@ -130,6 +131,8 @@ def main() -> int:
     py_files = 0
     for r, dest in cloned:
         for py in dest.rglob("*.py"):
+            if any(part in DEFAULT_EXCLUDES for part in py.parts):
+                continue  # skip vendored venv / site-packages / node_modules
             py_files += 1
             findings, counts = analyze_file(py)
             totals.update(counts)
