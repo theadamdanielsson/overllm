@@ -1,0 +1,7 @@
+- id: overllm
+  name: overllm (flag needless LLM calls)
+  description: Flags LLM/AI API calls where deterministic code would be simpler, cheaper, and more reliable.
+  entry: overllm
+  language: python
+  types: [python]
+  require_serial: false

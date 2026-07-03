@@ -1,0 +1,71 @@
+name: "overllm"
+description: "Flag LLM/AI calls where deterministic code is simpler. Posts one grounded PR comment, silent when clean."
+author: "Adam Danielsson"
+branding:
+  icon: "scissors"
+  color: "yellow"
+
+inputs:
+  paths:
+    description: "Files or directories to scan."
+    required: false
+    default: "."
+  fail-on-findings:
+    description: "Fail the check (exit non-zero) when findings exist."
+    required: false
+    default: "true"
+  comment:
+    description: "Post a single grounded comment on the pull request."
+    required: false
+    default: "true"
+  github-token:
+    description: "Token used to post the PR comment. Needs pull-requests: write."
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install overllm
+      shell: bash
+      run: |
+        python3 -m venv "$RUNNER_TEMP/overllm-venv"
+        "$RUNNER_TEMP/overllm-venv/bin/python" -m pip install -q --upgrade pip
+        "$RUNNER_TEMP/overllm-venv/bin/python" -m pip install -q "$GITHUB_ACTION_PATH"
+
+    - name: Run overllm
+      id: scan
+      shell: bash
+      run: |
+        BIN="$RUNNER_TEMP/overllm-venv/bin/overllm"
+        set +e
+        "$BIN" --format markdown ${{ inputs.paths }} > "$RUNNER_TEMP/overllm.md"
+        echo "found=$?" >> "$GITHUB_OUTPUT"
+        "$BIN" ${{ inputs.paths }} --no-color
+        exit 0
+
+    - name: Comment on PR
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' && steps.scan.outputs.found == '1' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+      run: |
+        marker="<!-- overllm-report -->"
+        existing=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+          --jq ".[] | select(.body | contains(\"$marker\")) | .id" | head -1)
+        if [ -n "$existing" ]; then
+          gh api -X PATCH "repos/$REPO/issues/comments/$existing" \
+            -F body=@"$RUNNER_TEMP/overllm.md" >/dev/null
+        else
+          gh api -X POST "repos/$REPO/issues/$PR/comments" \
+            -F body=@"$RUNNER_TEMP/overllm.md" >/dev/null
+        fi
+
+    - name: Fail if findings
+      if: ${{ inputs.fail-on-findings == 'true' && steps.scan.outputs.found == '1' }}
+      shell: bash
+      run: |
+        echo "::error::overllm found LLM calls that plain code could handle. See the job log or PR comment."
+        exit 1
