@@ -93,6 +93,13 @@ def test_extraction_email_flagged():
     assert "llm-extraction" in rule_set(src)
 
 
+def test_get_weather_on_a_date_not_extraction():
+    # regression (found on a real repo): "get the weather ... on a specific date"
+    # is not a date-extraction task; the verb and datum are unrelated
+    src = 'client.chat.completions.create(model="m", messages=[{"role":"user","content": f"Get the weather for {city} on a specific date"}])'
+    assert "llm-extraction" not in rule_set(src)
+
+
 def test_json_output_request_not_flagged():
     # regression (found on a real repo): asking for JSON-shaped output is legitimate
     # structured output, and "extract info from a webpage" is real semantic work, not a regex
@@ -175,3 +182,38 @@ def test_normal_dynamic_call_is_silent():
         '{"role":"user","content": f"The customer wrote: {message}. Draft a warm reply."}])'
     )
     assert rule_set(src) == set()
+
+
+# --- R5 prompt-injection -----------------------------------------------------
+
+def test_prompt_injection_from_request_var_flagged():
+    src = (
+        "def handler():\n"
+        "    q = request.args.get('q')\n"
+        "    return client.chat.completions.create(model='m', messages=[{'role':'user','content': f'Answer this: {q}'}])"
+    )
+    assert "prompt-injection" in rule_set(src)
+
+
+def test_prompt_injection_direct_request_flagged():
+    src = (
+        "def handler():\n"
+        "    return client.chat.completions.create(model='m', messages=[{'role':'user','content': f\"Q: {request.json['q']}\"}])"
+    )
+    assert "prompt-injection" in rule_set(src)
+
+
+def test_prompt_injection_from_input_flagged():
+    src = (
+        "q = input('ask: ')\n"
+        "client.chat.completions.create(model='m', messages=[{'role':'user','content': f'User asked: {q}'}])"
+    )
+    assert "prompt-injection" in rule_set(src)
+
+
+def test_trusted_variable_is_not_prompt_injection():
+    src = (
+        "def summarize(article):\n"
+        "    return client.chat.completions.create(model='m', messages=[{'role':'user','content': f'Summarize: {article}'}])"
+    )
+    assert "prompt-injection" not in rule_set(src)

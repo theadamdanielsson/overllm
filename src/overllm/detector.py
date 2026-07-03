@@ -95,6 +95,7 @@ class LLMCall:
     prompt_static: bool = False   # the user prompt is a compile-time constant
     prompt_resolved: bool = False # we could locate and read the user prompt
     in_loop: bool = False
+    tainted: bool = False         # untrusted external input flows into the prompt
     snippet: str = ""
 
 
@@ -232,8 +233,8 @@ def _messages_user_prompt(msgs: ast.expr) -> tuple[list[ast.expr], bool]:
 
 # --- Prompt extraction per API shape ----------------------------------------
 
-def _extract_prompt(call: ast.Call, api: str) -> tuple[str, bool, bool]:
-    """Return (prompt_text_lower, is_static, resolved) for a detected LLM call."""
+def _prompt_nodes(call: ast.Call, api: str) -> tuple[list[ast.expr], bool]:
+    """Return (user-prompt expression nodes, resolved) for a detected LLM call."""
     nodes: list[ast.expr] = []
     resolved = True
 
@@ -251,25 +252,22 @@ def _extract_prompt(call: ast.Call, api: str) -> tuple[str, bool, bool]:
                 resolved = False
     elif api == "ollama_generate":
         single = _kw(call, "prompt") or (call.args[0] if call.args else None)
-        if single is None:
-            resolved = False
-        else:
-            nodes = [single]
+        nodes, resolved = ([single], True) if single is not None else ([], False)
     elif api == "google":
         single = _kw(call, "contents") or (call.args[0] if call.args else None)
-        if single is None:
-            resolved = False
-        else:
-            nodes = [single]
+        nodes, resolved = ([single], True) if single is not None else ([], False)
     elif api == "positional":
         single = _kw(call, "input") or (call.args[0] if call.args else None)
-        if single is None:
-            resolved = False
-        else:
-            nodes = [single]
+        nodes, resolved = ([single], True) if single is not None else ([], False)
     else:  # http / generic - prompt not statically inspectable
-        return "", False, False
+        return [], False
 
+    return nodes, resolved
+
+
+def _extract_prompt(call: ast.Call, api: str) -> tuple[str, bool, bool]:
+    """Return (prompt_text_lower, is_static, resolved) for a detected LLM call."""
+    nodes, resolved = _prompt_nodes(call, api)
     if not resolved or not nodes:
         return "", False, resolved and bool(nodes)
 
@@ -281,6 +279,62 @@ def _extract_prompt(call: ast.Call, api: str) -> tuple[str, bool, bool]:
             texts.append(t)
         static = static and s
     return " ".join(texts).strip(), static, True
+
+
+# --- Taint: untrusted external input flowing into a prompt --------------------
+
+UNTRUSTED_ROOTS = ("request", "flask")  # web request objects
+UNTRUSTED_INPUT_CALLS = {"input"}       # builtins input()
+UNTRUSTED_WIDGET_METHODS = {"text_input", "text_area", "chat_input"}  # streamlit etc.
+
+
+def _expr_is_untrusted(node: ast.expr) -> bool:
+    """Does this expression read from a clearly untrusted external source?
+
+    Conservative on purpose: web request objects, input(), sys.argv, and a few
+    known input-widget calls. High precision beats broad coverage.
+    """
+    for sub in ast.walk(node):
+        if isinstance(sub, ast.Call):
+            f = sub.func
+            if isinstance(f, ast.Name) and f.id in UNTRUSTED_INPUT_CALLS:
+                return True
+            if isinstance(f, ast.Attribute) and f.attr in UNTRUSTED_WIDGET_METHODS:
+                return True
+        base = None
+        if isinstance(sub, ast.Attribute):
+            base = _dotted(sub)
+        elif isinstance(sub, ast.Subscript):
+            base = _dotted(sub.value)
+        if base:
+            parts = base.split(".")
+            if parts[0] in UNTRUSTED_ROOTS:
+                return True
+            if parts[0] == "sys" and "argv" in parts:
+                return True
+    return False
+
+
+def _tainted_vars(scope: ast.AST) -> set[str]:
+    tainted: set[str] = set()
+    for n in ast.walk(scope):
+        if isinstance(n, (ast.Assign, ast.AnnAssign)) and n.value is not None:
+            if _expr_is_untrusted(n.value):
+                targets = n.targets if isinstance(n, ast.Assign) else [n.target]
+                for t in targets:
+                    if isinstance(t, ast.Name):
+                        tainted.add(t.id)
+    return tainted
+
+
+def _prompt_is_tainted(nodes: list[ast.expr], tainted: set[str]) -> bool:
+    for pn in nodes:
+        if _expr_is_untrusted(pn):
+            return True
+        for sub in ast.walk(pn):
+            if isinstance(sub, ast.Name) and sub.id in tainted:
+                return True
+    return False
 
 
 # --- Import / variable context ----------------------------------------------
@@ -419,12 +473,22 @@ def _in_loop(node: ast.AST, parents: dict[int, ast.AST]) -> bool:
         child = cur
 
 
+def _enclosing_scope(node: ast.AST, parents: dict[int, ast.AST]) -> ast.AST | None:
+    cur = parents.get(id(node))
+    while cur is not None:
+        if isinstance(cur, FUNC_NODES):
+            return cur
+        cur = parents.get(id(cur))
+    return None
+
+
 # --- Entry point -------------------------------------------------------------
 
 def find_llm_calls(tree: ast.AST, source_lines: list[str]) -> list[LLMCall]:
     ctx = _Context()
     ctx.scan(tree)
     parents = _build_parents(tree)
+    taint_cache: dict[int, set[str]] = {}
 
     calls: list[LLMCall] = []
     for node in ast.walk(tree):
@@ -434,6 +498,14 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str]) -> list[LLMCall]:
         if api is None:
             continue
         text, static, resolved = _extract_prompt(node, api)
+
+        scope = _enclosing_scope(node, parents) or tree
+        sid = id(scope)
+        if sid not in taint_cache:
+            taint_cache[sid] = _tainted_vars(scope)
+        p_nodes, _ = _prompt_nodes(node, api)
+        tainted = _prompt_is_tainted(p_nodes, taint_cache[sid])
+
         line = getattr(node, "lineno", 0)
         snippet = source_lines[line - 1].strip() if 0 < line <= len(source_lines) else ""
         calls.append(
@@ -446,6 +518,7 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str]) -> list[LLMCall]:
                 prompt_static=static,
                 prompt_resolved=resolved,
                 in_loop=_in_loop(node, parents),
+                tainted=tainted,
                 snippet=snippet,
             )
         )

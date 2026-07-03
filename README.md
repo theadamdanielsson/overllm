@@ -44,10 +44,11 @@ Every rule fires only on a concrete code pattern, and every finding names the de
 
 | Rule | Fires when | Suggests |
 | --- | --- | --- |
-| `static-prompt` | The user prompt is a compile-time constant (no variables). The input is fixed, so the call buys nothing. | precompute or cache the result |
-| `llm-extraction` | The prompt asks the model to extract or parse an email, URL, date, number, or JSON. | a regex, `json`, `datetime`, or the SDK's structured-output mode |
+| `static-prompt` | The user prompt is a compile-time constant, no variables. The input is fixed, so the call buys nothing. | precompute or cache the result |
+| `llm-extraction` | The prompt asks the model to extract an email, URL, date, or number. | a regex, `datetime`, or `urllib.parse` |
 | `llm-mechanical` | The prompt asks for a mechanical transform: sort, reverse, count, sum, deduplicate, change case, base64, arithmetic on literals. | the one-line stdlib equivalent |
-| `llm-in-loop` | An LLM call sits inside a `for`/`async for`/comprehension. One API round-trip per iteration. | batch, cache, or move it out of the loop |
+| `llm-in-loop` | An LLM call runs once per loop iteration (real N calls, not streaming). | batch, cache, or move it out of the loop |
+| `prompt-injection` | Untrusted input (a web request, CLI arg, or `input()`) flows straight into the prompt. | keep it in a separate user message, validate it, constrain the model |
 
 It detects calls to the OpenAI, Anthropic, Google, Mistral, Cohere, Groq, LangChain, LiteLLM, and Ollama SDKs, and raw HTTP requests to those hosts.
 
@@ -79,7 +80,7 @@ In `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/theadamdanielsson/overllm
-    rev: v0.1.0
+    rev: v0.1.1
     hooks:
       - id: overllm
 ```

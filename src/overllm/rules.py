@@ -18,21 +18,24 @@ STATIC_PROMPT = "static-prompt"
 LLM_EXTRACTION = "llm-extraction"
 LLM_IN_LOOP = "llm-in-loop"
 LLM_MECHANICAL = "llm-mechanical"
+PROMPT_INJECTION = "prompt-injection"
 
-ALL_RULES = (STATIC_PROMPT, LLM_EXTRACTION, LLM_IN_LOOP, LLM_MECHANICAL)
+ALL_RULES = (STATIC_PROMPT, LLM_EXTRACTION, LLM_IN_LOOP, LLM_MECHANICAL, PROMPT_INJECTION)
 
 # (compiled pattern, human message, suggestion)
+# Bounded windows (not `.*`) so the verb and the datum have to be near each other;
+# a loose `.*` matched "get the weather ... on a specific date" on a real repo.
 _EXTRACTION_PATTERNS: list[tuple[re.Pattern, str, str]] = [
-    (re.compile(r"\bextract\b.*\b(e-?mail)\b"),
+    (re.compile(r"\bextract\b.{0,30}\be-?mail\b"),
      "asks the model to extract an email address",
      "match it with a regex, or use the `email-validator` package"),
-    (re.compile(r"\bextract\b.*\b(url|link|hyperlink)\b"),
+    (re.compile(r"\bextract\b.{0,30}\b(url|hyperlink)\b"),
      "asks the model to extract a URL",
      "use a regex or `urllib.parse`"),
-    (re.compile(r"\b(extract|parse|get)\b.*\b(date|datetime|timestamp)\b"),
+    (re.compile(r"\b(extract|parse)\b.{0,25}\b(date|datetime)\b"),
      "asks the model to extract or parse a date",
      "use `datetime.strptime` or `dateutil.parser`"),
-    (re.compile(r"\bextract\b.*\b(phone|number|integer|amount|price|digit)\b"),
+    (re.compile(r"\bextract\b.{0,30}\b(phone number|price|amount|dollar)\b"),
      "asks the model to extract a number",
      "use a regex, then `int()` / `float()`"),
 ]
@@ -120,6 +123,14 @@ def run_rules(call: LLMCall, path: str) -> list[Finding]:
             call, path, LLM_IN_LOOP,
             "LLM call inside a loop: one API round-trip per iteration (N calls, N latencies, N times the cost)",
             "batch the inputs into a single call, cache repeated results, or if the per-item work is deterministic use a function",
+        ))
+
+    # R5: untrusted external input flows straight into the prompt.
+    if call.tainted:
+        out.append(_finding(
+            call, path, PROMPT_INJECTION,
+            "untrusted input (a web request, CLI arg, or input()) flows into this prompt, a prompt-injection risk",
+            "keep external input in a separate user message (never the system prompt), validate it, and constrain what the model is allowed to do",
         ))
 
     return out
