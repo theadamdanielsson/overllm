@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Scan many real GitHub repos with overllm to measure precision and find real waste.
 
-Uses `gh search code` to find repos that actually call LLM SDKs, shallow-clones a
-sample, runs overllm on each, and prints an aggregate report. Two jobs at once:
-hardening (a low false-positive rate on real code is the whole value), and the
-"how much are people wasting" data for a launch post.
+Finds repos that actually call LLM SDKs, shallow-clones a sample, and analyzes
+every file with overllm as a library so it can report more than the CLI does:
+the batchable-vs-necessary loop split, how many prompts take untrusted input, and
+the actual rule findings. Two jobs: hardening (a low false-positive rate on real
+code is the whole value) and the "how much are people wasting" data for a launch.
 
 Usage:
-    python scripts/scan_corpus.py --limit 50 --workdir /tmp/overllm-corpus
+    python scripts/scan_corpus.py --limit 80 --workdir /tmp/overllm-corpus
 
 Requires: gh (authenticated), git, and overllm installed in the same environment.
 """
@@ -15,22 +16,33 @@ Requires: gh (authenticated), git, and overllm installed in the same environment
 from __future__ import annotations
 
 import argparse
+import ast
 import collections
 import json
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
-# Queries that hit real call sites across SDKs, not repos that merely mention them.
+from overllm.detector import find_llm_calls
+from overllm.rules import run_rules
+
+warnings.filterwarnings("ignore", category=SyntaxWarning)  # from parsing others' code
+
+# Queries that hit real call sites, weighted toward code that tends to over-call
+# (per-row loops, scrapers, classifiers) so we surface batchable waste.
 QUERIES = [
     "client.chat.completions.create language:python",
     "openai.ChatCompletion.create language:python",
     "client.messages.create anthropic language:python",
     "litellm.completion language:python",
     "ollama.chat language:python",
+    "chat.completions.create iterrows language:python",
+    "chat.completions.create scrape language:python",
+    "chat.completions.create classify language:python",
+    "chat.completions.create for row language:python",
 ]
 
-# Skip the big libraries themselves; we want application code that uses them.
 SKIP = (
     "langchain", "transformers", "llama_index", "llama-index", "autogen",
     "litellm", "openai/openai", "vllm", "awesome", "ollama/ollama", "haystack",
@@ -76,52 +88,72 @@ def clone(repo: str, dest: Path) -> bool:
     return dest.exists()
 
 
-def scan(path: Path) -> list[dict]:
+def analyze_file(path: Path) -> tuple[list, collections.Counter]:
+    counts: collections.Counter = collections.Counter()
+    findings: list = []
     try:
-        out = subprocess.run(
-            [sys.executable, "-m", "overllm", str(path), "--format", "json", "--exit-zero"],
-            capture_output=True, text=True, timeout=300,
-        ).stdout
-        return json.loads(out or "[]")
-    except Exception:
-        return []
+        src = path.read_text(encoding="utf-8", errors="ignore")
+        tree = ast.parse(src)
+    except (SyntaxError, ValueError, OSError, RecursionError):
+        return findings, counts
+    lines = src.splitlines()
+    for c in find_llm_calls(tree, lines):
+        counts["call_sites"] += 1
+        if c.loop_kind:
+            counts[f"loop_{c.loop_kind}"] += 1
+        if c.tainted:
+            counts["tainted_prompts"] += 1
+        findings.extend(run_rules(c, str(path)))
+    return findings, counts
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--limit", type=int, default=50)
+    ap.add_argument("--limit", type=int, default=80)
     ap.add_argument("--workdir", default="/tmp/overllm-corpus")
     args = ap.parse_args()
     work = Path(args.workdir)
     work.mkdir(parents=True, exist_ok=True)
 
     repos = collect(args.limit)
-    print(f"candidate repos: {len(repos)}")
+    print(f"candidate repos: {len(repos)}", flush=True)
     cloned: list[tuple[str, Path]] = []
     for r in repos:
         dest = work / r.replace("/", "__")
         if clone(r, dest):
             cloned.append((r, dest))
-    print(f"cloned: {len(cloned)}")
+    print(f"cloned: {len(cloned)}", flush=True)
 
+    totals: collections.Counter = collections.Counter()
     by_rule: collections.Counter = collections.Counter()
-    findings: list[dict] = []
+    report: list[dict] = []
     py_files = 0
     for r, dest in cloned:
-        py_files += sum(1 for _ in dest.rglob("*.py"))
-        for f in scan(dest):
-            f["repo"] = r
-            findings.append(f)
-            by_rule[f["rule"]] += 1
+        for py in dest.rglob("*.py"):
+            py_files += 1
+            findings, counts = analyze_file(py)
+            totals.update(counts)
+            for f in findings:
+                by_rule[f.rule] += 1
+                report.append({
+                    "repo": r, "path": str(py.relative_to(dest)), "line": f.line,
+                    "rule": f.rule, "message": f.message, "snippet": f.snippet[:120],
+                })
 
-    repos_with = len({f["repo"] for f in findings})
     print(f"\npython files scanned: {py_files}")
-    print(f"total findings: {len(findings)}  across {repos_with} repos")
+    print(f"LLM call sites found: {totals['call_sites']}")
+    print("loop split:  batchable (savings) = "
+          f"{totals['loop_batchable']}   necessary (agent/retry/while) = {totals['loop_necessary']}")
+    print(f"prompts taking untrusted input: {totals['tainted_prompts']}")
+    print(f"\nactionable rule findings: {sum(by_rule.values())}")
     print(f"by rule: {dict(by_rule)}")
-    print("\nsample (spot-check for false positives):")
-    for f in findings[:30]:
-        print(f"  [{f['rule']}] {f['repo']} L{f['line']}: {f['snippet'][:80]}")
-    (work / "_report.json").write_text(json.dumps(findings, indent=2))
+
+    savings = [f for f in report if f["rule"] in ("llm-in-loop", "llm-extraction", "llm-mechanical", "static-prompt")]
+    print("\nsavings candidates (spot-check):")
+    for f in savings[:30]:
+        print(f"  [{f['rule']}] {f['repo']} {f['path']}:{f['line']}  {f['snippet'][:70]}")
+
+    (work / "_report.json").write_text(json.dumps(report, indent=2))
     print(f"\nfull report: {work / '_report.json'}")
     return 0
 

@@ -117,12 +117,13 @@ def run_rules(call: LLMCall, path: str) -> list[Finding]:
                 out.append(_finding(call, path, LLM_MECHANICAL, "LLM call " + msg, sug))
                 break
 
-    # R3: an LLM call inside a loop - one API round-trip per iteration.
-    if call.in_loop:
+    # R3: an LLM call in a batchable loop - one API round-trip per item, where the
+    # items are independent (not a while/retry/conversation loop). Real savings.
+    if call.loop_kind == "batchable":
         out.append(_finding(
             call, path, LLM_IN_LOOP,
-            "LLM call inside a loop: one API round-trip per iteration (N calls, N latencies, N times the cost)",
-            "batch the inputs into a single call, cache repeated results, or if the per-item work is deterministic use a function",
+            "LLM call inside a per-item loop: one API round-trip per iteration (N calls, N latencies, N times the cost)",
+            "batch the items into a single call, cache repeated results, or if the per-item work is deterministic use a function",
         ))
 
     # R5: untrusted external input flows straight into the prompt.

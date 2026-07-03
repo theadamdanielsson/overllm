@@ -94,7 +94,7 @@ class LLMCall:
     prompt_text: str = ""         # lowercased visible literal text of the user prompt
     prompt_static: bool = False   # the user prompt is a compile-time constant
     prompt_resolved: bool = False # we could locate and read the user prompt
-    in_loop: bool = False
+    loop_kind: str | None = None  # "batchable" | "necessary" | None (not in a loop)
     tainted: bool = False         # untrusted external input flows into the prompt
     snippet: str = ""
 
@@ -452,25 +452,62 @@ def _child_field(parent: ast.AST, child: ast.AST) -> str | None:
     return None
 
 
-def _in_loop(node: ast.AST, parents: dict[int, ast.AST]) -> bool:
-    # True only if the call runs once per iteration. A call that is the loop's
-    # iterable (e.g. `async for chunk in create(..., stream=True)`) runs once and
-    # must NOT count -- that is streaming, not N calls.
+def _enclosing_loop(node: ast.AST, parents: dict[int, ast.AST]) -> ast.AST | None:
+    # Innermost loop whose BODY contains the call (runs once per iteration). A call
+    # that is the loop's iterable (`async for chunk in create(stream=True)`) runs
+    # once and is not counted -- that is streaming, not N calls.
     child = node
     while True:
         cur = parents.get(id(child))
         if cur is None or isinstance(cur, FUNC_NODES):
-            return False
-        if isinstance(cur, (ast.For, ast.AsyncFor)):
+            return None
+        if isinstance(cur, (ast.For, ast.AsyncFor, ast.While)):
             if _child_field(cur, child) in ("body", "orelse"):
-                return True
+                return cur
         elif isinstance(cur, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
             if _child_field(cur, child) in ("elt", "key", "value"):
-                return True
-        elif isinstance(cur, ast.comprehension):
-            if _child_field(cur, child) == "ifs":
-                return True
+                return cur
         child = cur
+
+
+def _loop_has_feedback(loop: ast.AST, call: ast.Call) -> bool:
+    # Conversation / agent loop: the messages list passed to the call is mutated
+    # (appended to) inside the loop, so each call depends on the previous answer.
+    msgs = _kw(call, "messages")
+    if not isinstance(msgs, ast.Name):
+        return False
+    name = msgs.id
+    for n in ast.walk(loop):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+            if n.func.attr in ("append", "extend", "insert") and isinstance(n.func.value, ast.Name):
+                if n.func.value.id == name:
+                    return True
+        if isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name) and n.target.id == name:
+            return True
+    return False
+
+
+def _loop_kind(node: ast.Call, parents: dict[int, ast.AST]) -> str | None:
+    """Classify the enclosing loop.
+
+    batchable -> a real per-item map (`for row in rows: llm(row)`); N calls that
+                 could be batched, cached, or replaced. This is a savings finding.
+    necessary -> a while loop, a `range(...)` retry/fixed-count loop, or a
+                 conversation loop that feeds prior answers back in. Not waste.
+    """
+    loop = _enclosing_loop(node, parents)
+    if loop is None:
+        return None
+    if isinstance(loop, ast.While):
+        return "necessary"
+    if isinstance(loop, (ast.For, ast.AsyncFor)):
+        it = loop.iter
+        if isinstance(it, ast.Call) and isinstance(it.func, ast.Name) and it.func.id == "range":
+            return "necessary"
+        if _loop_has_feedback(loop, node):
+            return "necessary"
+        return "batchable"
+    return "batchable"  # comprehension
 
 
 def _enclosing_scope(node: ast.AST, parents: dict[int, ast.AST]) -> ast.AST | None:
@@ -517,7 +554,7 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str]) -> list[LLMCall]:
                 prompt_text=text,
                 prompt_static=static,
                 prompt_resolved=resolved,
-                in_loop=_in_loop(node, parents),
+                loop_kind=_loop_kind(node, parents),
                 tainted=tainted,
                 snippet=snippet,
             )

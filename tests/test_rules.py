@@ -173,6 +173,35 @@ def test_streaming_inside_outer_loop_still_flagged():
     assert "llm-in-loop" in rule_set(src)
 
 
+def test_retry_range_loop_is_necessary():
+    # regression (found on a real repo, build-with-groq/g1): a range() retry loop
+    # is not per-item batching
+    src = (
+        "for attempt in range(3):\n"
+        "    client.chat.completions.create(model='m', messages=[{'role':'user','content': prompt}])"
+    )
+    assert "llm-in-loop" not in rule_set(src)
+
+
+def test_while_loop_is_necessary():
+    src = (
+        "while not done:\n"
+        "    client.chat.completions.create(model='m', messages=[{'role':'user','content': prompt}])"
+    )
+    assert "llm-in-loop" not in rule_set(src)
+
+
+def test_conversation_feedback_loop_is_necessary():
+    # a reasoning/agent loop that feeds prior answers back in is not batchable
+    src = (
+        "messages = []\n"
+        "for turn in turns:\n"
+        "    messages.append({'role':'user','content': turn})\n"
+        "    client.chat.completions.create(model='m', messages=messages)"
+    )
+    assert "llm-in-loop" not in rule_set(src)
+
+
 # --- precision: a normal, justified LLM call produces zero findings ----------
 
 def test_normal_dynamic_call_is_silent():
