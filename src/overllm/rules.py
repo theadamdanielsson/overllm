@@ -47,7 +47,7 @@ _MECHANICAL_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"\breverse\b.*\b(the\s+)?(string|list|order|text|these|it)\b"),
      "asks the model to reverse a sequence",
      "use `reversed()` or `[::-1]`"),
-    (re.compile(r"\bcount\b.*\b(the\s+)?(number of\s+)?(words|characters|letters|items|occurrences|lines|elements)\b"),
+    (re.compile(r"\bcount\b.{0,20}\b(the\s+)?(number of\s+)?(words|characters|letters|items|occurrences|elements)\b"),
      "asks the model to count",
      "use `len()`, `str.count()`, or `collections.Counter`"),
     (re.compile(r"\b(sum|add up|total|average|mean)\b.*\b(these|the)\b.*\b(numbers|values|amounts)\b|\bcalculate the (sum|total|average|mean)\b"),

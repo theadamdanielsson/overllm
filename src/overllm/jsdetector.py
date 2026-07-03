@@ -273,12 +273,33 @@ def _loop_kind(call, src: bytes) -> str | None:
 
 # --- classification ----------------------------------------------------------
 
-def _classify(call) -> bool:
+def _ai_imports(root, src: bytes) -> set:
+    """Names imported from the `ai` package or an `@ai-sdk/*` provider.
+
+    Gating the bare Vercel functions on a real import avoids matching a
+    user-defined helper that happens to be named `generateText`.
+    """
+    names: set = set()
+    for n in _walk(root):
+        if n.type == "import_statement":
+            source = n.child_by_field_name("source")
+            if source is None:
+                continue
+            mod = _text(source, src).strip("\"'`")
+            if mod == "ai" or mod.startswith("@ai-sdk"):
+                for m in _walk(n):
+                    if m.type == "identifier":
+                        names.add(_text(m, src))
+    return names
+
+
+def _classify(call, ai_imports: set) -> bool:
     func = call.child_by_field_name("function")
     if func is None:
         return False
     if func.type == "identifier":
-        return func.text.decode("utf-8", "ignore") in _VERCEL_FNS
+        name = func.text.decode("utf-8", "ignore")
+        return name in _VERCEL_FNS and name in ai_imports
     if func.type == "member_expression":
         _, props = _member_props(func)
         for suf in _METHOD_SUFFIXES:
@@ -294,12 +315,13 @@ def find_llm_calls_js(source: str, lang: str) -> list[LLMCall]:
     tree = _parser(lang).parse(src)
     root = tree.root_node
     decls = _declarations(root, src)
+    ai_imports = _ai_imports(root, src)
     tainted = _tainted_names(root, src, decls)
     lines = source.splitlines()
 
     calls: list[LLMCall] = []
     for node in _walk(root):
-        if node.type != "call_expression" or not _classify(node):
+        if node.type != "call_expression" or not _classify(node, ai_imports):
             continue
         obj = _object_arg(node)
         text, static, resolved = "", False, False

@@ -185,6 +185,13 @@ def test_mechanical_arithmetic_flagged():
     assert "llm-mechanical" in rule_set(src)
 
 
+def test_count_to_n_on_lines_not_mechanical():
+    # regression (found on a real JS repo): "count from 1 to 5 on separate lines"
+    # is output formatting, not counting lines
+    src = 'client.chat.completions.create(model="m", messages=[{"role":"user","content":"Count from 1 to 5 on separate lines."}])'
+    assert "llm-mechanical" not in rule_set(src)
+
+
 # --- R3 llm-in-loop ----------------------------------------------------------
 
 def test_llm_in_for_loop_flagged():
