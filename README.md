@@ -4,14 +4,15 @@
 
 overllm is a small, fast linter with one job: find the places in your code where you call an AI model to do something plain code does better. You called GPT to parse a date. You called a model to extract JSON that `json.loads` already handles. You are paying latency, money, and nondeterminism for a regex.
 
-It reads your code with Python's own `ast` module. No model runs, no network, no API key. Same code in, same result out. Fast enough for a pre-commit hook.
+It reads your code with a real parser: Python through the standard-library `ast`, and JavaScript and TypeScript through tree-sitter. No model runs, no network, no API key. Same code in, same result out. Fast enough for a pre-commit hook.
 
 Everyone else lints the code the AI wrote. overllm catches where you are paying an AI to do what a library already does.
 
 ## Install
 
 ```bash
-pip install overllm
+pip install overllm          # Python
+pip install "overllm[js]"    # adds JavaScript / TypeScript support
 ```
 
 ## Use it
@@ -50,7 +51,7 @@ Every rule fires only on a concrete code pattern, and every finding names the de
 | `llm-in-loop` | An LLM call runs once per loop iteration (real N calls, not streaming). | batch, cache, or move it out of the loop |
 | `prompt-injection` | Untrusted web-request input (`request.args`, `request.json`, ...) flows straight into the prompt. | keep it in a separate user message, validate it, constrain the model |
 
-It detects calls to the OpenAI, Anthropic, Google, Mistral, Cohere, Groq, LangChain, LiteLLM, and Ollama SDKs, and raw HTTP requests to those hosts.
+It detects the OpenAI, Anthropic, Google, Mistral, Cohere, Groq, AWS Bedrock, HuggingFace, Replicate, LangChain, LiteLLM, and Ollama SDKs in Python, the Vercel AI SDK (`generateText`, `streamText`, `generateObject`) and the openai / anthropic node SDKs in JavaScript and TypeScript, and raw HTTP requests to those hosts.
 
 ## Silence a false positive
 

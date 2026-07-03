@@ -6,18 +6,25 @@ import ast
 import re
 from pathlib import Path
 
+from . import jsdetector
 from .config import DEFAULT_EXCLUDES, Config
 from .detector import find_llm_calls
+from .jsdetector import find_llm_calls_js
 from .models import Finding
 from .rules import run_rules
 
-# `# overllm: ignore` or `# overllm: ignore=rule-a,rule-b`
-_IGNORE_RE = re.compile(r"#\s*overllm:\s*ignore(?:=([\w\-,\s]+))?")
-_IGNORE_FILE_RE = re.compile(r"#\s*overllm:\s*ignore-file\b")
+_PY_EXTS = (".py",)
+_JS_EXTS = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts")
+
+# `# overllm: ignore` or `// overllm: ignore=rule-a,rule-b`
+_IGNORE_RE = re.compile(r"(?:#|//)\s*overllm:\s*ignore(?:=([\w\-,\s]+))?")
+_IGNORE_FILE_RE = re.compile(r"(?:#|//)\s*overllm:\s*ignore-file\b")
 
 
 def iter_python_files(paths: list[str], excludes: tuple[str, ...]) -> list[Path]:
-    all_excludes = set(DEFAULT_EXCLUDES) | set(excludes)
+    exts = set(_PY_EXTS)
+    if jsdetector.available():
+        exts |= set(_JS_EXTS)
 
     def excluded(p: Path) -> bool:
         parts = set(p.parts)
@@ -30,11 +37,11 @@ def iter_python_files(paths: list[str], excludes: tuple[str, ...]) -> list[Path]
     for raw in paths:
         p = Path(raw)
         if p.is_file():
-            if p.suffix == ".py" and not excluded(p):
+            if p.suffix in exts and not excluded(p):
                 out.append(p)
         elif p.is_dir():
-            for f in sorted(p.rglob("*.py")):
-                if not excluded(f):
+            for f in sorted(p.rglob("*")):
+                if f.is_file() and f.suffix in exts and not excluded(f):
                     out.append(f)
     # dedupe, keep order
     seen: set[str] = set()
@@ -80,17 +87,27 @@ def analyze_file(path: Path, config: Config) -> list[Finding]:
         source = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return []
-    try:
-        tree = ast.parse(source, filename=str(path))
-    except SyntaxError:
-        return []  # not our job to report parse errors; stay quiet
 
     lines = source.splitlines()
     ignore_file, per_line = _line_directives(lines)
     if ignore_file:
         return []
 
-    calls = find_llm_calls(tree, lines)
+    lang = jsdetector.lang_for(str(path))
+    if lang is not None:
+        if not jsdetector.available():
+            return []
+        try:
+            calls = find_llm_calls_js(source, lang)
+        except Exception:
+            return []  # never crash on someone else's syntax
+    else:
+        try:
+            tree = ast.parse(source, filename=str(path))
+        except (SyntaxError, ValueError):
+            return []  # not our job to report parse errors; stay quiet
+        calls = find_llm_calls(tree, lines)
+
     findings: list[Finding] = []
     seen: set[tuple] = set()
     display_path = str(path)
