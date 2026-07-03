@@ -28,6 +28,8 @@ LLM_METHOD_SUFFIXES = (
     ("chat", "complete"),
     ("models", "generate_content"),
     ("generate_content",),
+    ("converse",),           # AWS Bedrock converse API
+    ("converse_stream",),
 )
 
 # Legacy module-level surfaces: openai.ChatCompletion.create, Completion.create.
@@ -44,6 +46,7 @@ LLM_DOTTED_FQNS = {
     "litellm.acompletion",
     "ollama.chat",
     "ollama.generate",
+    "replicate.run",
 }
 
 # Bare free functions, only when imported from one of these modules.
@@ -60,6 +63,7 @@ LLM_CONSTRUCTORS = {
     "ChatMistralAI", "MistralClient", "Mistral",
     "ChatCohere", "ChatGroq", "ChatOllama", "OllamaLLM", "ChatBedrock",
     "ChatLiteLLM", "LlamaCpp", "HuggingFaceHub", "LLMChain",
+    "InferenceClient", "ClientV2",  # HuggingFace, Cohere v2
 }
 
 # Methods on a tracked LLM object that count as a call.
@@ -67,6 +71,7 @@ LLM_OBJ_METHODS = {
     "invoke", "ainvoke", "stream", "astream", "batch", "abatch",
     "predict", "apredict", "generate", "agenerate", "complete", "acomplete",
     "run", "call", "generate_content",
+    "chat", "chat_completion", "chat_stream", "text_generation",  # cohere / HF
 }
 
 # Hosts that identify a raw-HTTP LLM request.
@@ -209,17 +214,60 @@ def _literal_text_and_static(node: ast.expr) -> tuple[str, bool]:
     return " ".join(texts).lower().strip(), static
 
 
-def _messages_user_prompt(msgs: ast.expr) -> tuple[list[ast.expr], bool]:
+def _single_assignments(scope: ast.AST) -> dict[str, ast.expr]:
+    """Names in a scope bound by exactly one plain `name = <expr>` assignment.
+
+    Names that are reassigned, augmented, or used as loop targets are excluded, so
+    resolving through them is safe. This lets us read prompts held in a variable
+    (`p = f"..."; create(messages=[{"content": p}])`), which is how most real code
+    is written, instead of only inline literals.
+    """
+    assigned: dict[str, ast.expr] = {}
+    unsafe: set[str] = set()
+    for n in ast.walk(scope):
+        if isinstance(n, ast.Assign):
+            if len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+                name = n.targets[0].id
+                if name in assigned:
+                    unsafe.add(name)
+                assigned[name] = n.value
+            else:
+                for t in n.targets:
+                    for sub in ast.walk(t):
+                        if isinstance(sub, ast.Name):
+                            unsafe.add(sub.id)
+        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.value is not None:
+            if n.target.id in assigned:
+                unsafe.add(n.target.id)
+            assigned[n.target.id] = n.value
+        elif isinstance(n, ast.AugAssign) and isinstance(n.target, ast.Name):
+            unsafe.add(n.target.id)
+        elif isinstance(n, (ast.For, ast.AsyncFor)) and isinstance(n.target, ast.Name):
+            unsafe.add(n.target.id)
+    return {k: v for k, v in assigned.items() if k not in unsafe}
+
+
+def _resolve(node: ast.expr, assignments: dict[str, ast.expr]) -> ast.expr:
+    seen: set[str] = set()
+    while isinstance(node, ast.Name) and node.id in assignments and node.id not in seen:
+        seen.add(node.id)
+        node = assignments[node.id]
+    return node
+
+
+def _messages_user_prompt(msgs: ast.expr, resolve) -> tuple[list[ast.expr], bool]:
     """Extract the `content` of user-role messages from a `messages=[...]` list.
 
-    Returns (content_nodes, resolved). resolved is False when the messages list
-    is a variable or otherwise not a static list of dict literals with constant
-    roles - in which case we stay silent rather than guess.
+    Returns (content_nodes, resolved). resolved is False when the list (after
+    variable resolution) is not a list of dict literals with constant roles - in
+    which case we stay silent rather than guess.
     """
+    msgs = resolve(msgs)
     if not isinstance(msgs, ast.List):
         return [], False
     contents: list[ast.expr] = []
     for el in msgs.elts:
+        el = resolve(el)
         if not isinstance(el, ast.Dict):
             return [], False
         role = _const_str(_dict_get(el, "role"))
@@ -227,47 +275,51 @@ def _messages_user_prompt(msgs: ast.expr) -> tuple[list[ast.expr], bool]:
         if role is None:
             return [], False
         if role == "user" and content is not None:
-            contents.append(content)
+            contents.append(resolve(content))
     return contents, True
 
 
 # --- Prompt extraction per API shape ----------------------------------------
 
-def _prompt_nodes(call: ast.Call, api: str) -> tuple[list[ast.expr], bool]:
-    """Return (user-prompt expression nodes, resolved) for a detected LLM call."""
+def _prompt_nodes(call: ast.Call, api: str, resolve) -> tuple[list[ast.expr], bool]:
+    """Return (user-prompt expression nodes, resolved) for a detected LLM call.
+
+    `resolve` follows a variable one or more hops to its assignment, so a prompt
+    held in a variable is read like an inline one.
+    """
     nodes: list[ast.expr] = []
     resolved = True
 
     if api in ("openai_like", "anthropic", "ollama_chat"):
         messages = _kw(call, "messages")
         if messages is not None:
-            nodes, resolved = _messages_user_prompt(messages)
+            nodes, resolved = _messages_user_prompt(messages, resolve)
         else:
             single = _kw(call, "prompt") or _kw(call, "input")
             if single is None and call.args:
                 single = call.args[0]
             if single is not None:
-                nodes = [single]
+                nodes = [resolve(single)]
             else:
                 resolved = False
     elif api == "ollama_generate":
         single = _kw(call, "prompt") or (call.args[0] if call.args else None)
-        nodes, resolved = ([single], True) if single is not None else ([], False)
+        nodes, resolved = ([resolve(single)], True) if single is not None else ([], False)
     elif api == "google":
         single = _kw(call, "contents") or (call.args[0] if call.args else None)
-        nodes, resolved = ([single], True) if single is not None else ([], False)
+        nodes, resolved = ([resolve(single)], True) if single is not None else ([], False)
     elif api == "positional":
         single = _kw(call, "input") or (call.args[0] if call.args else None)
-        nodes, resolved = ([single], True) if single is not None else ([], False)
+        nodes, resolved = ([resolve(single)], True) if single is not None else ([], False)
     else:  # http / generic - prompt not statically inspectable
         return [], False
 
     return nodes, resolved
 
 
-def _extract_prompt(call: ast.Call, api: str) -> tuple[str, bool, bool]:
+def _extract_prompt(call: ast.Call, api: str, resolve) -> tuple[str, bool, bool]:
     """Return (prompt_text_lower, is_static, resolved) for a detected LLM call."""
-    nodes, resolved = _prompt_nodes(call, api)
+    nodes, resolved = _prompt_nodes(call, api, resolve)
     if not resolved or not nodes:
         return "", False, resolved and bool(nodes)
 
@@ -283,35 +335,25 @@ def _extract_prompt(call: ast.Call, api: str) -> tuple[str, bool, bool]:
 
 # --- Taint: untrusted external input flowing into a prompt --------------------
 
-UNTRUSTED_ROOTS = ("request", "flask")  # web request objects
-UNTRUSTED_INPUT_CALLS = {"input"}       # builtins input()
-UNTRUSTED_WIDGET_METHODS = {"text_input", "text_area", "chat_input"}  # streamlit etc.
+UNTRUSTED_ROOTS = ("request", "flask")  # flask / django / fastapi web request objects
 
 
 def _expr_is_untrusted(node: ast.expr) -> bool:
-    """Does this expression read from a clearly untrusted external source?
+    """Does this expression read from a remote, untrusted web request?
 
-    Conservative on purpose: web request objects, input(), sys.argv, and a few
-    known input-widget calls. High precision beats broad coverage.
+    Deliberately web-only (request.args / json / form / query_params, flask.request).
+    A scan of 100 repos showed that counting local single-user input -- input(),
+    sys.argv, Streamlit text boxes -- as untrusted fires on normal apps, because the
+    operator is not attacking themselves. Prompt injection that matters is remote.
     """
     for sub in ast.walk(node):
-        if isinstance(sub, ast.Call):
-            f = sub.func
-            if isinstance(f, ast.Name) and f.id in UNTRUSTED_INPUT_CALLS:
-                return True
-            if isinstance(f, ast.Attribute) and f.attr in UNTRUSTED_WIDGET_METHODS:
-                return True
         base = None
         if isinstance(sub, ast.Attribute):
             base = _dotted(sub)
         elif isinstance(sub, ast.Subscript):
             base = _dotted(sub.value)
-        if base:
-            parts = base.split(".")
-            if parts[0] in UNTRUSTED_ROOTS:
-                return True
-            if parts[0] == "sys" and "argv" in parts:
-                return True
+        if base and base.split(".")[0] in UNTRUSTED_ROOTS:
+            return True
     return False
 
 
@@ -376,6 +418,8 @@ _SUFFIX_API = {
     ("chat", "complete"): "openai_like",
     ("models", "generate_content"): "google",
     ("generate_content",): "google",
+    ("converse",): "anthropic",
+    ("converse_stream",): "anthropic",
 }
 
 
@@ -397,7 +441,7 @@ def _classify(call: ast.Call, ctx: _Context) -> str | None:
     if attrs and attrs[-1] in LLM_OBJ_METHODS and isinstance(call.func, ast.Attribute):
         recv = _dotted(call.func.value)
         if recv in ctx.llm_vars:
-            return "positional"
+            return "openai_like" if _kw(call, "messages") is not None else "positional"
 
     # 4. Bare free functions imported from a known LLM module.
     if isinstance(call.func, ast.Name) and call.func.id in ctx.free_llm_names:
@@ -410,6 +454,8 @@ def _classify(call: ast.Call, ctx: _Context) -> str | None:
             return "ollama_generate"
         if d == "ollama.chat":
             return "ollama_chat"
+        if d == "replicate.run":
+            return "generic"  # prompt is nested in input={...}; detect but do not extract
         return "openai_like"
 
     # 6. Raw HTTP to a known LLM host.
@@ -538,6 +584,7 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str]) -> list[LLMCall]:
     ctx.scan(tree)
     parents = _build_parents(tree)
     taint_cache: dict[int, set[str]] = {}
+    assign_cache: dict[int, dict[str, ast.expr]] = {}
 
     calls: list[LLMCall] = []
     for node in ast.walk(tree):
@@ -546,13 +593,20 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str]) -> list[LLMCall]:
         api = _classify(node, ctx)
         if api is None:
             continue
-        text, static, resolved = _extract_prompt(node, api)
 
         scope = _enclosing_scope(node, parents) or tree
         sid = id(scope)
+        if sid not in assign_cache:
+            assign_cache[sid] = _single_assignments(scope)
+
+        def resolve(n, _a=assign_cache[sid]):
+            return _resolve(n, _a)
+
+        text, static, resolved = _extract_prompt(node, api, resolve)
+
         if sid not in taint_cache:
             taint_cache[sid] = _tainted_vars(scope)
-        p_nodes, _ = _prompt_nodes(node, api)
+        p_nodes, _ = _prompt_nodes(node, api, resolve)
         tainted = _prompt_is_tainted(p_nodes, taint_cache[sid])
 
         line = getattr(node, "lineno", 0)

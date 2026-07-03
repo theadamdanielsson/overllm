@@ -48,7 +48,7 @@ Every rule fires only on a concrete code pattern, and every finding names the de
 | `llm-extraction` | The prompt asks the model to extract an email, URL, date, or number. | a regex, `datetime`, or `urllib.parse` |
 | `llm-mechanical` | The prompt asks for a mechanical transform: sort, reverse, count, sum, deduplicate, change case, base64, arithmetic on literals. | the one-line stdlib equivalent |
 | `llm-in-loop` | An LLM call runs once per loop iteration (real N calls, not streaming). | batch, cache, or move it out of the loop |
-| `prompt-injection` | Untrusted input (a web request, CLI arg, or `input()`) flows straight into the prompt. | keep it in a separate user message, validate it, constrain the model |
+| `prompt-injection` | Untrusted web-request input (`request.args`, `request.json`, ...) flows straight into the prompt. | keep it in a separate user message, validate it, constrain the model |
 
 It detects calls to the OpenAI, Anthropic, Google, Mistral, Cohere, Groq, LangChain, LiteLLM, and Ollama SDKs, and raw HTTP requests to those hosts.
 

@@ -65,6 +65,37 @@ def test_ignores_plain_stdlib():
     assert n_calls(src) == 0
 
 
+def test_detects_bedrock_converse():
+    src = 'brt.converse(modelId="anthropic.claude-3", messages=[{"role":"user","content":[{"text": x}]}])'
+    assert n_calls(src) == 1
+
+
+def test_detects_cohere_v2_chat():
+    src = "co = cohere.ClientV2()\nco.chat(model='command-r', messages=[{'role':'user','content': q}])"
+    assert n_calls(src) == 1
+
+
+def test_detects_huggingface_chat_completion():
+    src = "hf = InferenceClient()\nhf.chat_completion(messages=[{'role':'user','content': q}])"
+    assert n_calls(src) == 1
+
+
+def test_detects_replicate_run():
+    src = 'replicate.run("meta/llama-3", input={"prompt": "hi"})'
+    assert n_calls(src) == 1
+
+
+def test_cohere_chat_extraction_flagged():
+    # new SDK + variable prompt + rule all together
+    src = (
+        "def f(t):\n"
+        "    co = cohere.ClientV2()\n"
+        "    msg = f'Extract the email from: {t}'\n"
+        "    return co.chat(model='command-r', messages=[{'role':'user','content': msg}])"
+    )
+    assert "llm-extraction" in rule_set(src)
+
+
 # --- R1 static-prompt --------------------------------------------------------
 
 def test_static_prompt_flagged():
@@ -98,6 +129,36 @@ def test_get_weather_on_a_date_not_extraction():
     # is not a date-extraction task; the verb and datum are unrelated
     src = 'client.chat.completions.create(model="m", messages=[{"role":"user","content": f"Get the weather for {city} on a specific date"}])'
     assert "llm-extraction" not in rule_set(src)
+
+
+def test_prompt_held_in_variable_is_resolved():
+    # the common real-world pattern: prompt in a variable, not inline
+    src = (
+        "def get_email(text):\n"
+        "    p = f'Extract the email from: {text}'\n"
+        "    return client.chat.completions.create(model='m', messages=[{'role':'user','content': p}])"
+    )
+    assert "llm-extraction" in rule_set(src)
+
+
+def test_message_dict_held_in_variable_is_resolved():
+    src = (
+        "def ask(q):\n"
+        "    user_msg = {'role':'user','content': f'Sort these alphabetically: {q}'}\n"
+        "    return client.chat.completions.create(model='m', messages=[user_msg])"
+    )
+    assert "llm-mechanical" in rule_set(src)
+
+
+def test_reassigned_variable_not_resolved():
+    # safety: a reassigned variable is ambiguous, so we do not resolve through it
+    src = (
+        "def f(text):\n"
+        "    p = 'Write a haiku about the sea.'\n"
+        "    p = build_prompt(text)\n"
+        "    return client.chat.completions.create(model='m', messages=[{'role':'user','content': p}])"
+    )
+    assert rule_set(src) == set()
 
 
 def test_json_output_request_not_flagged():
@@ -252,12 +313,22 @@ def test_prompt_injection_direct_request_flagged():
     assert "prompt-injection" in rule_set(src)
 
 
-def test_prompt_injection_from_input_flagged():
+def test_local_input_is_not_prompt_injection():
+    # regression (found scanning 100 repos): local single-user input (input(),
+    # CLI args, Streamlit text boxes) is not remote-untrusted; only web requests are
     src = (
         "q = input('ask: ')\n"
         "client.chat.completions.create(model='m', messages=[{'role':'user','content': f'User asked: {q}'}])"
     )
-    assert "prompt-injection" in rule_set(src)
+    assert "prompt-injection" not in rule_set(src)
+
+
+def test_streamlit_input_is_not_prompt_injection():
+    src = (
+        "q = st.text_area('query')\n"
+        "client.chat.completions.create(model='m', messages=[{'role':'user','content': f'Answer: {q}'}])"
+    )
+    assert "prompt-injection" not in rule_set(src)
 
 
 def test_trusted_variable_is_not_prompt_injection():

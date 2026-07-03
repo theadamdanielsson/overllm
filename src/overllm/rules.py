@@ -130,7 +130,7 @@ def run_rules(call: LLMCall, path: str) -> list[Finding]:
     if call.tainted:
         out.append(_finding(
             call, path, PROMPT_INJECTION,
-            "untrusted input (a web request, CLI arg, or input()) flows into this prompt, a prompt-injection risk",
+            "untrusted web-request input flows straight into this prompt, a prompt-injection risk",
             "keep external input in a separate user message (never the system prompt), validate it, and constrain what the model is allowed to do",
         ))
 
