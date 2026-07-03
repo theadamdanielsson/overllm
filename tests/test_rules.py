@@ -93,9 +93,11 @@ def test_extraction_email_flagged():
     assert "llm-extraction" in rule_set(src)
 
 
-def test_extraction_json_flagged():
-    src = 'client.chat.completions.create(model="m", messages=[{"role":"user","content": f"Return only valid JSON for {payload}"}])'
-    assert "llm-extraction" in rule_set(src)
+def test_json_output_request_not_flagged():
+    # regression (found on a real repo): asking for JSON-shaped output is legitimate
+    # structured output, and "extract info from a webpage" is real semantic work, not a regex
+    src = 'client.chat.completions.create(model="m", messages=[{"role":"user","content": f"Extract all product info and format it as JSON: {content}"}])'
+    assert rule_set(src) == set()
 
 
 # --- R4 llm-mechanical -------------------------------------------------------
@@ -133,6 +135,35 @@ def test_llm_in_comprehension_flagged():
 def test_llm_not_in_loop_not_flagged():
     src = 'client.chat.completions.create(model="m", messages=[{"role":"user","content": f"Summarize {article}"}])'
     assert "llm-in-loop" not in rule_set(src)
+
+
+def test_streaming_async_for_not_flagged():
+    # regression (found on a real repo): `async for chunk in create(stream=True)` is
+    # ONE call whose chunks are iterated, not N calls
+    src = (
+        "async def go():\n"
+        "    async for chunk in client.chat.completions.create("
+        "model='m', messages=[{'role':'user','content': p}], stream=True):\n"
+        "        print(chunk)"
+    )
+    assert "llm-in-loop" not in rule_set(src)
+
+
+def test_call_as_for_iterable_not_flagged():
+    src = "for x in client.chat.completions.create(model='m', messages=[{'role':'user','content': p}]):\n    print(x)"
+    assert "llm-in-loop" not in rule_set(src)
+
+
+def test_streaming_inside_outer_loop_still_flagged():
+    # the call is the inner loop's iterable, but the outer loop makes it run N times
+    src = (
+        "async def go():\n"
+        "    for item in items:\n"
+        "        async for chunk in client.chat.completions.create("
+        "model='m', messages=[{'role':'user','content': item}], stream=True):\n"
+        "            print(chunk)"
+    )
+    assert "llm-in-loop" in rule_set(src)
 
 
 # --- precision: a normal, justified LLM call produces zero findings ----------

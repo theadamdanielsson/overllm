@@ -35,15 +35,6 @@ _EXTRACTION_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"\bextract\b.*\b(phone|number|integer|amount|price|digit)\b"),
      "asks the model to extract a number",
      "use a regex, then `int()` / `float()`"),
-    (re.compile(r"\b(return|reply|respond|output|answer)\b.*\bonly\b.*\bjson\b"),
-     "asks the model to return raw JSON",
-     "use the SDK's structured-output / JSON mode, or `json.loads` on typed fields"),
-    (re.compile(r"\bvalid\s+json\b|\bjson\s+format\b|\bas\s+json\b"),
-     "asks the model to format output as JSON",
-     "use `json.dumps`, or the SDK's structured-output mode"),
-    (re.compile(r"\bparse\b.*\b(the\s+)?(json|csv|xml|yaml|html)\b"),
-     "asks the model to parse a structured format",
-     "use `json` / `csv` / `xml` / a real parser"),
 ]
 
 _MECHANICAL_PATTERNS: list[tuple[re.Pattern, str, str]] = [
@@ -74,9 +65,6 @@ _MECHANICAL_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"\bformat\b.*\b(the\s+)?date\b|\bconvert\b.*\bdate\b"),
      "asks the model to format a date",
      "use `datetime.strftime` / `strptime`"),
-    (re.compile(r"\b(pretty[- ]?print|minify|format)\b.*\bjson\b"),
-     "asks the model to reformat JSON",
-     "use `json.dumps(indent=...)`"),
 ]
 
 _MIN_STATIC_LEN = 12  # ignore trivial/placeholder prompts for the static rule

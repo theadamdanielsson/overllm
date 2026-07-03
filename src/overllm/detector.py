@@ -389,17 +389,34 @@ def _build_parents(tree: ast.AST) -> dict[int, ast.AST]:
     return parents
 
 
+def _child_field(parent: ast.AST, child: ast.AST) -> str | None:
+    for field, value in ast.iter_fields(parent):
+        if value is child:
+            return field
+        if isinstance(value, list) and any(item is child for item in value):
+            return field
+    return None
+
+
 def _in_loop(node: ast.AST, parents: dict[int, ast.AST]) -> bool:
-    cur = parents.get(id(node))
-    while cur is not None:
-        if isinstance(cur, FUNC_NODES):
+    # True only if the call runs once per iteration. A call that is the loop's
+    # iterable (e.g. `async for chunk in create(..., stream=True)`) runs once and
+    # must NOT count -- that is streaming, not N calls.
+    child = node
+    while True:
+        cur = parents.get(id(child))
+        if cur is None or isinstance(cur, FUNC_NODES):
             return False
         if isinstance(cur, (ast.For, ast.AsyncFor)):
-            return True
-        if isinstance(cur, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
-            return True
-        cur = parents.get(id(cur))
-    return False
+            if _child_field(cur, child) in ("body", "orelse"):
+                return True
+        elif isinstance(cur, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            if _child_field(cur, child) in ("elt", "key", "value"):
+                return True
+        elif isinstance(cur, ast.comprehension):
+            if _child_field(cur, child) == "ifs":
+                return True
+        child = cur
 
 
 # --- Entry point -------------------------------------------------------------

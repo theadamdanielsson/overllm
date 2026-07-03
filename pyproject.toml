@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "overllm"
-version = "0.1.0"
+version = "0.1.1"
 description = "Catch the LLM/AI calls you didn't need. A fast, deterministic linter that flags LLM API calls where plain code is simpler, cheaper, and more reliable."
 readme = "README.md"
 requires-python = ">=3.9"
