@@ -10,6 +10,7 @@ try:  # tomllib is stdlib on 3.11+; config files are simply ignored below it
 except ModuleNotFoundError:  # pragma: no cover
     tomllib = None
 
+from .models import SEVERITY_RANK
 from .rules import ALL_RULES
 
 DEFAULT_EXCLUDES = (
@@ -24,9 +25,13 @@ class Config:
     select: tuple[str, ...] = ALL_RULES
     ignore: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
+    min_severity: str = "warning"
 
     def enabled(self, rule: str) -> bool:
         return rule in self.select and rule not in self.ignore
+
+    def severe_enough(self, severity: str) -> bool:
+        return SEVERITY_RANK.get(severity, 2) >= SEVERITY_RANK.get(self.min_severity, 2)
 
 
 def _read_table(path: Path) -> dict:
@@ -63,4 +68,7 @@ def load_config(start: Path | None = None, explicit: Path | None = None) -> Conf
     exclude = tuple(table.get("exclude", ()))
     # keep only known rule ids in select, so a typo does not silently disable everything
     select = tuple(r for r in select if r in ALL_RULES) or ALL_RULES
-    return Config(select=select, ignore=ignore, exclude=exclude)
+    min_severity = table.get("min_severity", "warning")
+    if min_severity not in SEVERITY_RANK:
+        min_severity = "warning"
+    return Config(select=select, ignore=ignore, exclude=exclude, min_severity=min_severity)

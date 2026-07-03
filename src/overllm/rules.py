@@ -22,6 +22,17 @@ PROMPT_INJECTION = "prompt-injection"
 
 ALL_RULES = (STATIC_PROMPT, LLM_EXTRACTION, LLM_IN_LOOP, LLM_MECHANICAL, PROMPT_INJECTION)
 
+# error   = clearly unnecessary call, or a security risk (raise by default)
+# warning = a real cost pattern worth reviewing (raise by default)
+# info    = a minor smell, mostly demo/tutorial code (quiet unless asked for)
+RULE_SEVERITY = {
+    LLM_EXTRACTION: "error",
+    LLM_MECHANICAL: "error",
+    PROMPT_INJECTION: "error",
+    LLM_IN_LOOP: "warning",
+    STATIC_PROMPT: "info",
+}
+
 # (compiled pattern, human message, suggestion)
 # Bounded windows (not `.*`) so the verb and the datum have to be near each other;
 # a loose `.*` matched "get the weather ... on a specific date" on a real repo.
@@ -81,6 +92,7 @@ def _finding(call: LLMCall, path: str, rule: str, message: str, suggestion: str)
         rule=rule,
         message=message,
         suggestion=suggestion,
+        severity=RULE_SEVERITY.get(rule, "warning"),
         snippet=call.snippet,
     )
 

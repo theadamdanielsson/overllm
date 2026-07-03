@@ -12,10 +12,13 @@ _COLORS = {
     "reset": "\033[0m",
     "dim": "\033[2m",
     "bold": "\033[1m",
+    "red": "\033[31m",
     "yellow": "\033[33m",
     "cyan": "\033[36m",
     "green": "\033[32m",
 }
+
+_SEV_COLOR = {"error": "red", "warning": "yellow", "info": "dim"}
 
 _RULE_HELP = "https://github.com/theadamdanielsson/overllm#rules"
 
@@ -30,8 +33,10 @@ def format_human(findings: list[Finding], use_color: bool = True) -> str:
     lines: list[str] = []
     for f in findings:
         loc = f"{f.path}:{f.line}:{f.col + 1}"
+        sev = _c(_SEV_COLOR.get(f.severity, "yellow"), use_color)
         lines.append(
             f"{_c('bold', use_color)}{loc}{_c('reset', use_color)} "
+            f"{sev}{f.severity}{_c('reset', use_color)} "
             f"{_c('yellow', use_color)}{f.rule}{_c('reset', use_color)}  {f.message}"
         )
         if f.snippet:
@@ -79,7 +84,7 @@ def format_sarif(findings: list[Finding]) -> str:
     results = [
         {
             "ruleId": f.rule,
-            "level": "warning",
+            "level": {"error": "error", "warning": "warning", "info": "note"}.get(f.severity, "warning"),
             "message": {"text": f"{f.message}. {f.suggestion}".strip()},
             "locations": [
                 {

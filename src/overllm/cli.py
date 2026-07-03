@@ -23,6 +23,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--format", choices=["human", "json", "sarif", "markdown"], default="human")
     p.add_argument("--select", help="comma-separated rule ids to run (default: all)")
     p.add_argument("--ignore", help="comma-separated rule ids to skip")
+    p.add_argument("--min-severity", choices=["error", "warning", "info"],
+                   help="only report findings at this severity or above (default: warning)")
+    p.add_argument("--all", action="store_true",
+                   help="report everything, including info-level findings")
     p.add_argument("--config", type=Path, help="path to a config file (pyproject.toml or .overllm.toml)")
     p.add_argument("--exit-zero", action="store_true", help="always exit 0, even when findings exist")
     p.add_argument("--no-color", action="store_true", help="disable ANSI colors")
@@ -47,6 +51,10 @@ def main(argv: list[str] | None = None) -> int:
     ignore = _split(args.ignore)
     if ignore:
         config.ignore = tuple(set(config.ignore) | set(ignore))
+    if args.all:
+        config.min_severity = "info"
+    elif args.min_severity:
+        config.min_severity = args.min_severity
 
     findings = analyze_paths(paths, config)
 

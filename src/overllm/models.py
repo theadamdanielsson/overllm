@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 SEVERITIES = ("error", "warning", "info")
+SEVERITY_RANK = {"error": 3, "warning": 2, "info": 1}
 
 
 @dataclass(frozen=True)

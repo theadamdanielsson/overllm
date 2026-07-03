@@ -43,13 +43,15 @@ overllm exits non-zero when it finds something, so it gates a commit or a CI che
 
 Every rule fires only on a concrete code pattern, and every finding names the deterministic replacement. It stays silent when it is not sure.
 
-| Rule | Fires when | Suggests |
-| --- | --- | --- |
-| `static-prompt` | The user prompt is a compile-time constant, no variables. The input is fixed, so the call buys nothing. | precompute or cache the result |
-| `llm-extraction` | The prompt asks the model to extract an email, URL, date, or number. | a regex, `datetime`, or `urllib.parse` |
-| `llm-mechanical` | The prompt asks for a mechanical transform: sort, reverse, count, sum, deduplicate, change case, base64, arithmetic on literals. | the one-line stdlib equivalent |
-| `llm-in-loop` | An LLM call runs once per loop iteration (real N calls, not streaming). | batch, cache, or move it out of the loop |
-| `prompt-injection` | Untrusted web-request input (`request.args`, `request.json`, ...) flows straight into the prompt. | keep it in a separate user message, validate it, constrain the model |
+By default overllm only raises **warning** and above, so it is quiet on your everyday code. `static-prompt` is **info** and stays silent unless you ask for it with `--all` or `--min-severity info`.
+
+| Rule | Severity | Fires when | Suggests |
+| --- | --- | --- | --- |
+| `llm-mechanical` | error | The prompt asks for a mechanical transform: sort, reverse, count, sum, deduplicate, change case, base64, arithmetic on literals. | the one-line stdlib equivalent |
+| `llm-extraction` | error | The prompt asks the model to extract an email, URL, date, or number. | a regex, `datetime`, or `urllib.parse` |
+| `prompt-injection` | error | Untrusted web-request input (`request.args`, `request.json`, ...) flows straight into the prompt. | keep it in a separate user message, validate it, constrain the model |
+| `llm-in-loop` | warning | An LLM call runs once per loop iteration (real N calls, not streaming). | batch, cache, or move it out of the loop |
+| `static-prompt` | info | The user prompt is a compile-time constant, no variables. The input is fixed, so the call buys nothing. | precompute or cache the result |
 
 It detects the OpenAI, Anthropic, Google, Mistral, Cohere, Groq, AWS Bedrock, HuggingFace, Replicate, LangChain, LiteLLM, and Ollama SDKs in Python, the Vercel AI SDK (`generateText`, `streamText`, `generateObject`) and the openai / anthropic node SDKs in JavaScript and TypeScript, and raw HTTP requests to those hosts.
 

@@ -118,6 +118,8 @@ def analyze_file(path: Path, config: Config) -> list[Finding]:
         for f in run_rules(call, display_path):
             if not config.enabled(f.rule):
                 continue
+            if not config.severe_enough(f.severity):
+                continue
             if f.key in seen:
                 continue
             if _suppressed(f, node_lines, per_line):
