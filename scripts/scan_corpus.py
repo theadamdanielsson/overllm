@@ -48,6 +48,20 @@ QUERIES_JS = [
     "generateText language:javascript",
 ]
 
+# Amateur / AI-authored bias: the pre-1.0 OpenAI API (2023 tutorial copies),
+# bot/chatbot scripts, and repos built with Claude Code / Cursor.
+QUERIES_AMATEUR = [
+    "openai.ChatCompletion.create language:python",
+    "openai.Completion.create language:python",
+    "chat.completions.create bot language:python",
+    "chat.completions.create for language:python",
+    "chat.completions.create chatbot language:python",
+    "openai api_key = sk- language:python",
+    "generateText ai chatbot language:typescript",
+    "filename:CLAUDE.md openai",
+    "filename:.cursorrules openai",
+]
+
 SKIP = (
     "langchain", "transformers", "llama_index", "llama-index", "autogen",
     "litellm", "openai/openai", "vllm", "awesome", "ollama/ollama", "haystack",
@@ -124,13 +138,17 @@ def analyze_file(path: Path) -> tuple[list, collections.Counter]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--lang", choices=["py", "js", "all"], default="py")
+    ap.add_argument("--profile", choices=["default", "amateur"], default="default")
     ap.add_argument("--limit", type=int, default=80)
     ap.add_argument("--workdir", default="/tmp/overllm-corpus")
     args = ap.parse_args()
     work = Path(args.workdir)
     work.mkdir(parents=True, exist_ok=True)
 
-    queries = {"py": QUERIES_PY, "js": QUERIES_JS, "all": QUERIES_PY + QUERIES_JS}[args.lang]
+    if args.profile == "amateur":
+        queries = QUERIES_AMATEUR
+    else:
+        queries = {"py": QUERIES_PY, "js": QUERIES_JS, "all": QUERIES_PY + QUERIES_JS}[args.lang]
     repos = collect(queries, args.limit)
     print(f"candidate repos: {len(repos)}", flush=True)
     cloned: list[tuple[str, Path]] = []
