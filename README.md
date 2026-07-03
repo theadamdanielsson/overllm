@@ -17,11 +17,15 @@ pip install "overllm[js]"    # adds JavaScript / TypeScript support
 
 ## Use it
 
+Point it at one file first, so you can see what it flags before you run it on everything:
+
 ```bash
-overllm .            # scan the current project
-overllm src/         # scan a folder
-overllm app.py       # scan one file
+overllm app.py       # one file
+overllm src/         # a folder
+overllm .            # the whole project
 ```
+
+It reads your code and prints what it finds. It writes nothing and changes nothing — the worst case of running it is a few lines of output.
 
 Example output:
 
@@ -37,7 +41,15 @@ app.py:88:1 llm-in-loop  LLM call inside a loop: one API round-trip per iteratio
 2 needless LLM calls in 1 file.
 ```
 
+It is quiet by default. Only `warning` and `error` findings show, so a clean project prints nothing and exits 0 — most codebases surface a handful or none. If it floods you, treat that as a bug and [open an issue](https://github.com/theadamdanielsson/overllm/issues).
+
 overllm exits non-zero when it finds something, so it gates a commit or a CI check. Pass `--exit-zero` to report without failing.
+
+## Your code stays on your machine
+
+overllm is static analysis. It parses your files locally, then prints what it found. It never uploads your code, never calls an API, needs no key, and sends no telemetry — there is no model in the loop and nothing phones home. Pull your network cable and it runs exactly the same.
+
+The core is a few hundred lines of Python with no required dependencies, so you can read all of it before you trust it. `overllm[js]` adds tree-sitter to parse JavaScript and TypeScript; that is the only optional dependency.
 
 ## Rules
 
@@ -74,7 +86,7 @@ ignore = ["llm-in-loop"]
 exclude = ["examples/", "migrations/"]
 ```
 
-Or on the command line: `--select`, `--ignore`, `--exclude` via config, `--config PATH`.
+Or on the command line: `--select`, `--ignore`, `--min-severity`, `--all`, and `--config PATH` (`exclude` is config-only). Run `overllm --help` for the full list.
 
 ## Pre-commit hook
 
@@ -83,7 +95,7 @@ In `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/theadamdanielsson/overllm
-    rev: v0.1.1
+    rev: v0.3.0
     hooks:
       - id: overllm
 ```
@@ -122,6 +134,12 @@ overllm --format markdown .  # the PR-comment body
 ## Why not just use an AI code reviewer?
 
 AI reviewers and AI-slop linters look at the code the model produced: comments, dead code, structure. None of them ask the question overllm asks, which is whether you needed the model at all. It is a different axis, and it is one plain static analysis can answer with high precision and zero cost.
+
+## Contributing
+
+The most useful thing you can send is a false positive: a real line of code where overllm flags a call it should not. A linter is only worth running if it is right, so one concrete bad flag is worth more than a feature request. [CONTRIBUTING.md](CONTRIBUTING.md) covers how to report one and how to run the tests.
+
+Past releases and what changed are in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
