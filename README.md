@@ -99,7 +99,7 @@ In `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/theadamdanielsson/overllm
-    rev: v0.3.0
+    rev: v0.4.0
     hooks:
       - id: overllm
 ```
