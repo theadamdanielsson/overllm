@@ -135,6 +135,29 @@ overllm --format sarif .     # upload to GitHub code scanning
 overllm --format markdown .  # the PR-comment body
 ```
 
+## Use it from an agent (MCP server)
+
+overllm ships an MCP server, so an AI agent (Claude Desktop, Cursor, or anything that speaks MCP) can call it to audit code for needless model calls. It exposes two tools: `scan_path` (a file or directory on disk) and `scan_code` (a snippet passed inline). Both return the same findings the CLI does — the rule, the location, and the concrete replacement — and neither writes or changes anything.
+
+Install the server variant and point your client at it:
+
+```bash
+pip install "overllm[mcp]"
+```
+
+```json
+{
+  "mcpServers": {
+    "overllm": {
+      "command": "uvx",
+      "args": ["--from", "overllm[mcp]", "overllm-mcp"]
+    }
+  }
+}
+```
+
+Then ask the agent things like "scan this repo for unnecessary LLM calls" or "is this function wasting a model call?" and it gets grounded, deterministic findings instead of guessing.
+
 ## Why not just use an AI code reviewer?
 
 AI reviewers and AI-slop linters look at the code the model produced: comments, dead code, structure. None of them ask the question overllm asks, which is whether you needed the model at all. It is a different axis, and it is one plain static analysis can answer with high precision and zero cost.

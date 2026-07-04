@@ -3,6 +3,14 @@
 Notable changes per release. Versions follow [semantic versioning](https://semver.org);
 dates are the tag date.
 
+## 0.5.0 — 2026-07-04
+
+- overllm now ships an MCP server (`pip install "overllm[mcp]"`, run with
+  `overllm-mcp`), so an AI agent can call it directly. Two tools: `scan_path`
+  for files and directories on disk, `scan_code` for a snippet passed inline.
+  Both return the same deterministic findings as the CLI and change nothing.
+- `server.json` for publishing to the official MCP registry.
+
 ## 0.4.0 — 2026-07-04
 
 - New rule `deprecated-model`: flags a `model` id that is retired (the call 404s —
