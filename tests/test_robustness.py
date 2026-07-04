@@ -59,9 +59,32 @@ def test_fix_formfeed_in_earlier_line_no_corruption():
 # --- detector recursion + scan containment (CRITICAL #3) ----------------------
 
 def test_detector_deep_concat_prompt_no_recursionerror():
-    concat = "+".join(['"a"'] * 6000)
-    src = f'x = client.chat.completions.create(model="gpt-4o", messages=[{{"role":"user","content":{concat}}}])'
-    find_llm_calls(ast.parse(src), src.splitlines())  # must not raise
+    # A 2000-deep `"a"+"a"+...` prompt, built WITHOUT the parser (whose own
+    # recursion limit during ast construction is version-dependent) so this
+    # exercises overllm's prompt-walk depth guard, not ast.parse. Without the
+    # guard this RecursionErrors inside _literal_text_and_static.
+    content: ast.expr = ast.Constant(value="a")
+    for _ in range(2000):
+        content = ast.BinOp(left=content, op=ast.Add(), right=ast.Constant(value="a"))
+    call = ast.Call(
+        func=ast.Attribute(
+            value=ast.Attribute(
+                value=ast.Attribute(value=ast.Name(id="client", ctx=ast.Load()), attr="chat", ctx=ast.Load()),
+                attr="completions", ctx=ast.Load()),
+            attr="create", ctx=ast.Load()),
+        args=[],
+        keywords=[
+            ast.keyword(arg="model", value=ast.Constant(value="gpt-4o")),
+            ast.keyword(arg="messages", value=ast.List(elts=[ast.Dict(
+                keys=[ast.Constant(value="role"), ast.Constant(value="content")],
+                values=[ast.Constant(value="user"), content])], ctx=ast.Load())),
+        ])
+    module = ast.Module(body=[ast.Expr(value=call)], type_ignores=[])
+    for node in ast.walk(module):  # ast.walk is iterative -> safe at depth 2000
+        for attr, default in (("lineno", 1), ("end_lineno", 1), ("col_offset", 0), ("end_col_offset", 0)):
+            if not hasattr(node, attr):
+                setattr(node, attr, default)
+    find_llm_calls(module, [])  # must not raise
 
 
 def test_analyze_one_bad_file_does_not_abort_scan(tmp_path):
