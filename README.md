@@ -1,3 +1,5 @@
+<!-- mcp-name: io.github.theadamdanielsson/overllm -->
+
 # overllm
 
 **Catch the LLM/AI calls you didn't need.**
@@ -139,7 +141,7 @@ overllm --format markdown .  # the PR-comment body
 
 overllm ships an MCP server, so an AI agent (Claude Desktop, Cursor, or anything that speaks MCP) can call it to audit code for needless model calls. It exposes two tools: `scan_path` (a file or directory on disk) and `scan_code` (a snippet passed inline). Both return the same findings the CLI does — the rule, the location, and the concrete replacement — and neither writes or changes anything.
 
-Install the server variant and point your client at it:
+Install the server variant and point your client at it (the server needs Python 3.10+; the linter itself still runs on 3.9):
 
 ```bash
 pip install "overllm[mcp]"

@@ -3,6 +3,13 @@
 Notable changes per release. Versions follow [semantic versioning](https://semver.org);
 dates are the tag date.
 
+## 0.5.1 — 2026-07-04
+
+- Gate the `mcp` dependency to Python 3.10+ (the MCP SDK requires it), so the
+  linter still installs and tests clean on 3.9. Core overllm remains 3.9+.
+- Add the MCP registry ownership marker to the README and publish `server.json`
+  at 0.5.1.
+
 ## 0.5.0 — 2026-07-04
 
 - overllm now ships an MCP server (`pip install "overllm[mcp]"`, run with

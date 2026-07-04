@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.theadamdanielsson/overllm",
   "description": "Find the LLM/AI calls you didn't need — where plain code or a regex does the job. No model.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "repository": {
     "url": "https://github.com/theadamdanielsson/overllm",
     "source": "github"
@@ -11,7 +11,7 @@
     {
       "registryType": "pypi",
       "identifier": "overllm",
-      "version": "0.5.0",
+      "version": "0.5.1",
       "transport": { "type": "stdio" }
     }
   ]

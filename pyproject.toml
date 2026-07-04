@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "overllm"
-version = "0.5.0"
+version = "0.5.1"
 description = "Catch the LLM/AI calls you didn't need. A fast, deterministic linter that flags LLM API calls where plain code is simpler, cheaper, and more reliable."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -35,14 +35,14 @@ js = [
   "tree-sitter-typescript>=0.23",
 ]
 mcp = [
-  "mcp>=1.2,<2",
+  "mcp>=1.2,<2; python_version >= '3.10'",
   "tree-sitter>=0.23",
   "tree-sitter-javascript>=0.23",
   "tree-sitter-typescript>=0.23",
 ]
 dev = [
   "pytest>=7",
-  "mcp>=1.2,<2",
+  "mcp>=1.2,<2; python_version >= '3.10'",
   "tree-sitter>=0.23",
   "tree-sitter-javascript>=0.23",
   "tree-sitter-typescript>=0.23",
