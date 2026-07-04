@@ -30,7 +30,16 @@ LLM_METHOD_SUFFIXES = (
     ("generate_content",),
     ("converse",),           # AWS Bedrock converse API
     ("converse_stream",),
+    ("embeddings", "create"),  # an embedding call: no NL prompt, but batchable in a loop
 )
+
+# Unambiguous chains: no non-LLM API exposes these, so they need no kwarg guard --
+# this catches the common `client.chat.completions.create(**params)` splat form
+# that hides the model/messages inside a dict.
+_ALWAYS_MATCH = frozenset({
+    ("chat", "completions", "create"), ("chat", "completions", "parse"),
+    ("responses", "create"), ("responses", "parse"), ("generate_content",),
+})
 
 # Legacy module-level surfaces: openai.ChatCompletion.create, Completion.create.
 LLM_LEGACY_SUFFIXES = (
@@ -426,16 +435,19 @@ _SUFFIX_API = {
     ("generate_content",): "google",
     ("converse",): "anthropic",
     ("converse_stream",): "anthropic",
+    ("embeddings", "create"): "embeddings",
 }
 
 
 def _classify(call: ast.Call, ctx: _Context) -> str | None:
     base, attrs = _trailing_attrs(call.func)
 
-    # 1. Known method suffixes (need an LLM-shaped kwarg as a precision guard).
+    # 1. Known method suffixes. Ambiguous ones need an LLM-shaped kwarg (or a
+    #    positional arg) as a precision guard; the unambiguous chains in
+    #    _ALWAYS_MATCH do not, so a `**kwargs` splat is still caught.
     for suf in LLM_METHOD_SUFFIXES:
         if len(attrs) >= len(suf) and attrs[-len(suf):] == suf:
-            if suf == ("generate_content",) or _has_llm_kwarg(call) or call.args:
+            if suf in _ALWAYS_MATCH or _has_llm_kwarg(call) or call.args:
                 return _SUFFIX_API[suf]
 
     # 2. Legacy module-level completion APIs.
