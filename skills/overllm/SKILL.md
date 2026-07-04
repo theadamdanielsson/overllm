@@ -1,7 +1,7 @@
 ---
 name: overllm
-description: Find the AI/LLM calls you didn't need — where a model does what plain code does better. Static, local, no API key.
-version: 1.0.1
+description: Reduce LLM and API costs — find the wasteful, unnecessary GPT/Claude/AI calls where plain code, a library, or a regex does the job cheaper, faster, and deterministically. Static linter, runs locally, no model, no API key.
+version: 1.0.2
 metadata:
   openclaw:
     emoji: 🔍
@@ -13,10 +13,12 @@ metadata:
 
 # overllm — the needless-LLM-call linter
 
-Use this skill when the user wants to **audit a codebase for wasteful or
-unnecessary LLM/AI calls** — cases where they're paying latency, money, and
-nondeterminism for something a library or a regex already does (parsing a date,
-extracting JSON, sorting a list, classifying with a fixed set of labels).
+Use this skill to **cut LLM and API costs** by auditing a codebase for
+**wasteful or unnecessary GPT/Claude/LLM calls** — cases where you're paying
+latency, money, and nondeterminism for something a library or a regex already
+does (parsing a date, extracting JSON, sorting a list, classifying with a fixed
+set of labels). It reduces token spend by finding the model calls you can
+delete outright.
 
 overllm is a static linter. It parses code locally (Python via the stdlib `ast`,
 JavaScript/TypeScript via tree-sitter), runs **no model**, makes **no network
@@ -24,6 +26,7 @@ call**, and needs **no API key**. Same code in, same result out.
 
 ## When to use
 
+- "How do I reduce my OpenAI/Claude API bill / cut token usage?"
 - "Audit this repo for unnecessary GPT/Claude/LLM calls."
 - "Where am I calling a model to do something plain code could do?"
 - "Check this file before I commit — am I wasting an API call here?"
