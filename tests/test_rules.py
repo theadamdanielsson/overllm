@@ -192,6 +192,21 @@ def test_count_to_n_on_lines_not_mechanical():
     assert "llm-mechanical" not in rule_set(src)
 
 
+def test_mechanical_deduplicate_flagged():
+    src = 'client.chat.completions.create(model="m", messages=[{"role":"user","content":"Remove duplicates from this list of names."}])'
+    assert "llm-mechanical" in rule_set(src)
+
+
+def test_unique_adjective_not_dedup():
+    # regression (found on real repos): "unique" as an adjective -- "unique
+    # features", "a unique logo", "makes it unique" -- is not a dedup request.
+    for prompt in ("Describe the unique features of this destination.",
+                   "Create a unique, professional logo for the brand.",
+                   "Explain what makes this place unique."):
+        src = f'client.chat.completions.create(model="m", messages=[{{"role":"user","content":{prompt!r}}}])'
+        assert "llm-mechanical" not in rule_set(src)
+
+
 # --- R3 llm-in-loop ----------------------------------------------------------
 
 def test_llm_in_for_loop_flagged():

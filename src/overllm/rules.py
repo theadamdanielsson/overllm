@@ -64,7 +64,11 @@ _MECHANICAL_PATTERNS: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"\b(sum|add up|total|average|mean)\b.*\b(these|the)\b.*\b(numbers|values|amounts)\b|\bcalculate the (sum|total|average|mean)\b"),
      "asks the model to do arithmetic over values",
      "use `sum()` / `statistics.mean()`"),
-    (re.compile(r"\b(remove duplicates|deduplicate|de-duplicate|unique(\s+values)?)\b"),
+    # "unique" must sit on a collection ("unique values/items/emails"), not stand
+    # alone as an adjective -- "unique features", "a unique logo", "makes it unique"
+    # are not dedup requests. Found by scanning real repos.
+    (re.compile(r"\b(remove|drop|eliminate)\s+(the\s+)?duplicates?\b|\bde-?duplicate\b|"
+                r"\bunique\s+(values|items|elements|entries|rows|lines|list|set|strings|numbers|ids|keys|names)\b"),
      "asks the model to deduplicate",
      "use `set()` or `dict.fromkeys()`"),
     (re.compile(r"\b(uppercase|lowercase|to upper|to lower|capitalize|title[- ]?case)\b"),
