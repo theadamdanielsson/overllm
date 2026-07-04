@@ -173,7 +173,7 @@ def _dict_get(d: ast.Dict, key: str) -> ast.expr | None:
     return None
 
 
-def _literal_text_and_static(node: ast.expr) -> tuple[str, bool]:
+def _literal_text_and_static(node: ast.expr, resolve=None) -> tuple[str, bool]:
     """Collect the visible literal text of an expression and whether it is fully static.
 
     Handles string literals, f-strings, `+` concatenation, `.format()` and `%`
@@ -222,6 +222,12 @@ def _literal_text_and_static(node: ast.expr) -> tuple[str, bool]:
             ):
                 texts.append(f.value.value)
             static = False
+        elif isinstance(n, ast.Name) and resolve is not None:
+            r = resolve(n)
+            if isinstance(r, ast.Name):  # still unresolved -> a runtime value
+                static = False
+            else:
+                walk(r, depth + 1)
         else:
             static = False
 
@@ -259,6 +265,26 @@ def _single_assignments(scope: ast.AST) -> dict[str, ast.expr]:
             unsafe.add(n.target.id)
         elif isinstance(n, (ast.For, ast.AsyncFor)) and isinstance(n.target, ast.Name):
             unsafe.add(n.target.id)
+    return {k: v for k, v in assigned.items() if k not in unsafe}
+
+
+def _module_assignments(tree: ast.AST) -> dict[str, ast.expr]:
+    """Top-level module constants only (`NAME = <expr>` directly in the module
+    body). Deliberately NOT function-locals, so resolving a function's unresolved
+    name against this can never pick up a different function's local of the same
+    name -- only a genuine module-level constant (a `prompts.py` pattern)."""
+    assigned: dict[str, ast.expr] = {}
+    unsafe: set[str] = set()
+    for n in getattr(tree, "body", []):
+        if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+            name = n.targets[0].id
+            if name in assigned:
+                unsafe.add(name)
+            assigned[name] = n.value
+        elif isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.value is not None:
+            if n.target.id in assigned:
+                unsafe.add(n.target.id)
+            assigned[n.target.id] = n.value
     return {k: v for k, v in assigned.items() if k not in unsafe}
 
 
@@ -341,7 +367,7 @@ def _extract_prompt(call: ast.Call, api: str, resolve) -> tuple[str, bool, bool]
     texts = []
     static = True
     for n in nodes:
-        t, s = _literal_text_and_static(n)
+        t, s = _literal_text_and_static(n, resolve)
         if t:
             texts.append(t)
         static = static and s
@@ -774,6 +800,7 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str], allow: tuple = ()) ->
     ctx = _Context()
     ctx.scan(tree)
     wrappers = _find_wrappers(tree, ctx)
+    module_assignments = _module_assignments(tree)
     parents = _build_parents(tree)
     taint_cache: dict[int, set[str]] = {}
     assign_cache: dict[int, dict[str, ast.expr]] = {}
@@ -800,8 +827,11 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str], allow: tuple = ()) ->
         if sid not in assign_cache:
             assign_cache[sid] = _single_assignments(scope)
 
-        def resolve(n, _a=assign_cache[sid]):
-            return _resolve(n, _a)
+        def resolve(n, _fn=assign_cache[sid], _mod=module_assignments):
+            r = _resolve(n, _fn)
+            if isinstance(r, ast.Name):  # unresolved in-function -> try module constants
+                r = _resolve(r, _mod)
+            return r
 
         if wrapper is not None:
             # A call to the project's own wrapper: inline the call-site args into
