@@ -3,6 +3,26 @@
 Notable changes per release. Versions follow [semantic versioning](https://semver.org);
 dates are the tag date.
 
+## 0.6.1 — 2026-07-04
+
+Correctness patch from an adversarial red-team of 0.6.0. **If you ran
+`overllm --fix` on 0.6.0, re-check any file that had a non-ASCII character
+(emoji, accented letter) on the same line as an edited parameter — the edit
+could have been misplaced.** 0.6.1 fixes that.
+
+- **`--fix` no longer corrupts files with non-ASCII on the edited line.** AST
+  column offsets are UTF-8 *byte* offsets; the edit math now runs in byte space,
+  so a multibyte character earlier on the line can no longer shift — or crash
+  (`IndexError`) — an edit. All edits are bounds-checked and re-parsed before
+  writing.
+- **A single pathological file can no longer abort a whole scan.** Bounded the
+  recursion in prompt extraction and contained any detector error per file (the
+  Python path now matches the JS path's isolation).
+- **Baseline: distinct multi-line calls no longer fingerprint-collide** (keyed on
+  the whole call, not just its first line, so a genuinely new finding isn't
+  masked), and **paths are normalized cwd-relative** so a baseline written locally
+  matches the same repo in CI.
+
 ## 0.6.0 — 2026-07-04
 
 - **Wrapper recall.** overllm now follows a project's own LLM wrapper. When a

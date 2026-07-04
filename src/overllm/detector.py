@@ -175,8 +175,11 @@ def _literal_text_and_static(node: ast.expr) -> tuple[str, bool]:
     texts: list[str] = []
     static = True
 
-    def walk(n: ast.expr) -> None:
+    def walk(n: ast.expr, depth: int = 0) -> None:
         nonlocal static
+        if depth > 120:  # a pathological chain (thousands of `+` terms) -> bail, not crash
+            static = False
+            return
         if isinstance(n, ast.Constant):
             if isinstance(n.value, str):
                 texts.append(n.value)
@@ -187,19 +190,19 @@ def _literal_text_and_static(node: ast.expr) -> tuple[str, bool]:
                 elif isinstance(v, ast.FormattedValue):
                     static = False
                 else:
-                    walk(v)
+                    walk(v, depth + 1)
         elif isinstance(n, ast.BinOp):
             if isinstance(n.op, ast.Add):
-                walk(n.left)
-                walk(n.right)
+                walk(n.left, depth + 1)
+                walk(n.right, depth + 1)
             elif isinstance(n.op, ast.Mod):
-                walk(n.left)  # the template string
+                walk(n.left, depth + 1)  # the template string
                 static = False
             else:
                 static = False
         elif isinstance(n, (ast.List, ast.Tuple)):
             for e in n.elts:
-                walk(e)
+                walk(e, depth + 1)
         elif isinstance(n, ast.Call):
             f = n.func
             if (
@@ -808,7 +811,15 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str], allow: tuple = ()) ->
         tainted = _prompt_is_tainted(p_nodes, taint_cache[sid])
 
         line = getattr(node, "lineno", 0)
-        snippet = source_lines[line - 1].strip() if 0 < line <= len(source_lines) else ""
+        # Capture the whole call span (collapsed to one line), not just its first
+        # physical line, so two different multi-line calls don't share a snippet --
+        # the baseline fingerprints on this, and identical first lines would collide.
+        end_line = getattr(node, "end_lineno", line) or line
+        if 0 < line <= len(source_lines):
+            raw = " ".join(source_lines[line - 1:min(end_line, len(source_lines))])
+            snippet = " ".join(raw.split())[:160]
+        else:
+            snippet = ""
         loop_kind = _loop_kind(node, parents)
         calls.append(
             LLMCall(

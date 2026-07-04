@@ -3,9 +3,13 @@ drowning in pre-existing findings.
 
 Snapshot the current findings to a file (`--write-baseline`), commit it, then
 gate CI on `--baseline` so only NEW findings are reported. The fingerprint is
-content-based and deliberately excludes the line number, so it survives edits
-elsewhere in the file; it is NOT a bare per-file count, so a genuinely new
-wasteful call can never hide behind a deleted old one.
+content-based (rule + path + the whole call text + model) and deliberately
+excludes the line number, so it survives edits elsewhere in the file. It counts
+occurrences rather than netting them, so a new wasteful call still surfaces when
+an old one is deleted -- UNLESS the new call is byte-identical to the deleted one
+(two identical calls in a file are indistinguishable by content, so the count
+can't tell them apart). That is the one inherent blind spot of a
+line-independent baseline.
 """
 
 from __future__ import annotations
@@ -91,7 +95,9 @@ def filter_new(findings: list[Finding], baseline: dict) -> list[Finding]:
 
     Per-fingerprint counting: if the baseline allows N occurrences of a
     fingerprint, the first N current occurrences are suppressed and any excess is
-    reported (a real regression), so introducing a new identical call still fires.
+    reported (a real regression). A new call at a different site fires as long as
+    its full call text differs from the baselined ones; a byte-identical new call
+    is the inherent blind spot noted in the module docstring.
     """
     seen: Counter = Counter()
     kept: list[Finding] = []
