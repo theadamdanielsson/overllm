@@ -1,9 +1,12 @@
 """The rule set. Every rule keys off an observable code pattern, not taste, and
 every finding names a concrete deterministic replacement.
 
-v1 is deliberately about one thing: LLM calls you did not need. It does not do
-generic complexity, dead code, or style - that ground is already covered by
-other tools, and it is where an opinionated linter turns into noise.
+The core question is: LLM calls you did not need (mechanical/extraction/static),
+should not make as written (in-loop cost, prompt-injection), or configured wrong
+in a code-visible way (a retired model id, a sampling param a model rejects). All
+of it is deterministic and provable from the source. It deliberately does NOT do
+generic complexity, dead code, style, or "is this model too big for the task" --
+that last one needs judgement, which is where a precise linter turns into noise.
 """
 
 from __future__ import annotations
@@ -19,10 +22,15 @@ LLM_EXTRACTION = "llm-extraction"
 LLM_IN_LOOP = "llm-in-loop"
 LLM_MECHANICAL = "llm-mechanical"
 PROMPT_INJECTION = "prompt-injection"
+DEPRECATED_MODEL = "deprecated-model"
+UNSUPPORTED_PARAMS = "unsupported-params"
 
-ALL_RULES = (STATIC_PROMPT, LLM_EXTRACTION, LLM_IN_LOOP, LLM_MECHANICAL, PROMPT_INJECTION)
+ALL_RULES = (
+    STATIC_PROMPT, LLM_EXTRACTION, LLM_IN_LOOP, LLM_MECHANICAL, PROMPT_INJECTION,
+    DEPRECATED_MODEL, UNSUPPORTED_PARAMS,
+)
 
-# error   = clearly unnecessary call, or a security risk (raise by default)
+# error   = clearly unnecessary call, a broken call, or a security risk (raise by default)
 # warning = a real cost pattern worth reviewing (raise by default)
 # info    = a minor smell, mostly demo/tutorial code (quiet unless asked for)
 RULE_SEVERITY = {
@@ -31,6 +39,8 @@ RULE_SEVERITY = {
     PROMPT_INJECTION: "error",
     LLM_IN_LOOP: "warning",
     STATIC_PROMPT: "info",
+    DEPRECATED_MODEL: "warning",   # per-finding: error when retired, warning when deprecated
+    UNSUPPORTED_PARAMS: "warning",
 }
 
 # (compiled pattern, human message, suggestion)
@@ -87,8 +97,60 @@ _MECHANICAL_PATTERNS: list[tuple[re.Pattern, str, str]] = [
 
 _MIN_STATIC_LEN = 12  # ignore trivial/placeholder prompts for the static rule
 
+# --- Model hygiene -----------------------------------------------------------
+# Deterministic facts about the call: the model id is a known-old string, or a
+# sampling parameter is set on a model that rejects it. Exact-match on the model
+# id (lowercased), so live aliases -- davinci-002, claude-3-haiku, gpt-4o -- never
+# trip. Sourced from provider deprecation pages; this list needs periodic updating.
 
-def _finding(call: LLMCall, path: str, rule: str, message: str, suggestion: str) -> Finding:
+# Retired models: the call 404s today.
+_RETIRED_MODELS = {
+    "claude-1": "claude-sonnet-4-6", "claude-1.0": "claude-sonnet-4-6",
+    "claude-1.2": "claude-sonnet-4-6", "claude-1.3": "claude-sonnet-4-6",
+    "claude-instant-1": "claude-haiku-4-5", "claude-instant-1.1": "claude-haiku-4-5",
+    "claude-instant-1.2": "claude-haiku-4-5",
+    "claude-2": "claude-sonnet-4-6", "claude-2.0": "claude-sonnet-4-6",
+    "claude-2.1": "claude-sonnet-4-6",
+    "claude-3-sonnet-20240229": "claude-sonnet-4-6",
+    "claude-3-5-sonnet-20240620": "claude-sonnet-4-6",
+    "claude-3-5-sonnet-20241022": "claude-sonnet-4-6",
+    "claude-3-opus-20240229": "claude-opus-4-8",
+    "claude-3-5-haiku-20241022": "claude-haiku-4-5",
+    "claude-3-7-sonnet-20250219": "claude-sonnet-4-6",
+    "text-davinci-003": "gpt-4o-mini", "text-davinci-002": "gpt-4o-mini",
+    "text-davinci-001": "gpt-4o-mini", "text-curie-001": "gpt-4o-mini",
+    "text-babbage-001": "gpt-4o-mini", "text-ada-001": "gpt-4o-mini",
+    "davinci": "gpt-4o-mini", "curie": "gpt-4o-mini",
+    "babbage": "gpt-4o-mini", "ada": "gpt-4o-mini",
+    "code-davinci-002": "gpt-4o-mini", "code-cushman-001": "gpt-4o-mini",
+    "gpt-3.5-turbo-0301": "gpt-4o-mini", "gpt-4-0314": "gpt-4o", "gpt-4-32k-0314": "gpt-4o",
+}
+# Deprecated models: still served, scheduled for removal.
+_DEPRECATED_MODELS = {
+    "claude-3-haiku-20240307": "claude-haiku-4-5",
+    "claude-opus-4-20250514": "claude-opus-4-8",
+    "claude-sonnet-4-20250514": "claude-sonnet-4-6",
+    "claude-opus-4-1-20250805": "claude-opus-4-8",
+    "gpt-3.5-turbo-0613": "gpt-4o-mini", "gpt-3.5-turbo-16k-0613": "gpt-4o-mini",
+    "gpt-4-32k": "gpt-4o", "gpt-4-32k-0613": "gpt-4o",
+    "gpt-4-vision-preview": "gpt-4o", "gpt-4-1106-vision-preview": "gpt-4o",
+}
+
+# Models that reject sampling params: a 400 on the newest Anthropic models, and on
+# the OpenAI reasoning (o-) series, which only accept the default temperature.
+_NO_SAMPLING_MODELS = {
+    "claude-opus-4-8", "claude-opus-4-7", "claude-fable-5", "claude-mythos-5",
+}
+_OPENAI_REASONING_RE = re.compile(r"^o[1-9][0-9]?(?:-|$)")
+_SAMPLING_PARAMS = ("temperature", "top_p", "top_k")
+
+
+def _rejects_sampling(model: str) -> bool:
+    return model in _NO_SAMPLING_MODELS or bool(_OPENAI_REASONING_RE.match(model))
+
+
+def _finding(call: LLMCall, path: str, rule: str, message: str, suggestion: str,
+             severity: str | None = None) -> Finding:
     return Finding(
         path=path,
         line=call.line,
@@ -96,7 +158,7 @@ def _finding(call: LLMCall, path: str, rule: str, message: str, suggestion: str)
         rule=rule,
         message=message,
         suggestion=suggestion,
-        severity=RULE_SEVERITY.get(rule, "warning"),
+        severity=severity or RULE_SEVERITY.get(rule, "warning"),
         snippet=call.snippet,
     )
 
@@ -149,5 +211,34 @@ def run_rules(call: LLMCall, path: str) -> list[Finding]:
             "untrusted web-request input flows straight into this prompt, a prompt-injection risk",
             "keep external input in a separate user message (never the system prompt), validate it, and constrain what the model is allowed to do",
         ))
+
+    # R6/R7: model hygiene -- a retired/deprecated model id, or a sampling
+    # parameter set on a model that rejects it. Both key off the literal model
+    # string, so they stay silent when the model is not a plain string.
+    model = (call.model or "").lower()
+    if model:
+        if model in _RETIRED_MODELS:
+            out.append(_finding(
+                call, path, DEPRECATED_MODEL,
+                f"calls \"{call.model}\", a retired model that no longer exists (this request will 404)",
+                f"switch to `{_RETIRED_MODELS[model]}`",
+                severity="error",
+            ))
+        elif model in _DEPRECATED_MODELS:
+            out.append(_finding(
+                call, path, DEPRECATED_MODEL,
+                f"calls \"{call.model}\", a deprecated model scheduled for retirement",
+                f"switch to `{_DEPRECATED_MODELS[model]}`",
+                severity="warning",
+            ))
+        if _rejects_sampling(model):
+            bad = [p for p in _SAMPLING_PARAMS if p in call.params]
+            if bad:
+                out.append(_finding(
+                    call, path, UNSUPPORTED_PARAMS,
+                    f"sets {', '.join(bad)} on \"{call.model}\", which does not accept sampling "
+                    "parameters -- reasoning/thinking models reject them (a 400), so the setting is a no-op or an error",
+                    "remove the parameter; steer these models with the prompt (and effort/reasoning depth) instead",
+                ))
 
     return out

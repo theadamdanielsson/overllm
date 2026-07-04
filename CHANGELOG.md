@@ -3,6 +3,18 @@
 Notable changes per release. Versions follow [semantic versioning](https://semver.org);
 dates are the tag date.
 
+## 0.4.0 — 2026-07-04
+
+- New rule `deprecated-model`: flags a `model` id that is retired (the call 404s —
+  raised as an error) or deprecated and scheduled for removal (a warning), and names
+  the current model to switch to. Exact-match against a known list, so a live model
+  or alias is never flagged.
+- New rule `unsupported-params`: flags `temperature` / `top_p` / `top_k` set on a
+  model that rejects them — the OpenAI reasoning (`o1`, `o3`, ...) series and the
+  newest Anthropic models, where the parameter is a no-op or a 400.
+- Both key off facts the parser already sees (the model string, the parameter names),
+  so they stay silent whenever the model isn't a plain string literal.
+
 ## 0.3.0 — 2026-07-04
 
 - Findings now carry a severity (`error`, `warning`, `info`). overllm raises only

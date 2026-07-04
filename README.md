@@ -63,7 +63,11 @@ By default overllm only raises **warning** and above, so it is quiet on your eve
 | `llm-extraction` | error | The prompt asks the model to extract an email, URL, date, or number. | a regex, `datetime`, or `urllib.parse` |
 | `prompt-injection` | error | Untrusted web-request input (`request.args`, `request.json`, ...) flows straight into the prompt. | keep it in a separate user message, validate it, constrain the model |
 | `llm-in-loop` | warning | An LLM call runs once per loop iteration (real N calls, not streaming). | batch, cache, or move it out of the loop |
+| `deprecated-model` | error / warning | The `model` id is a retired model (the call 404s) or one that is deprecated and scheduled for removal. | switch to the current model it names |
+| `unsupported-params` | warning | `temperature` / `top_p` / `top_k` is set on a model that rejects them — the OpenAI reasoning (`o1`, `o3`, ...) series and the newest Anthropic models. | remove the parameter; steer with the prompt instead |
 | `static-prompt` | info | The user prompt is a compile-time constant, no variables. The input is fixed, so the call buys nothing. | precompute or cache the result |
+
+The last two check the call itself, not the prompt: a model id that no longer exists, or a knob the model ignores. Both are matched exactly against a known list, so a live model or alias is never flagged. The lists track provider deprecation pages and need updating over time.
 
 It detects the OpenAI, Anthropic, Google, Mistral, Cohere, Groq, AWS Bedrock, HuggingFace, Replicate, LangChain, LiteLLM, and Ollama SDKs in Python, the Vercel AI SDK (`generateText`, `streamText`, `generateObject`) and the openai / anthropic node SDKs in JavaScript and TypeScript, and raw HTTP requests to those hosts.
 

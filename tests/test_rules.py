@@ -359,3 +359,46 @@ def test_trusted_variable_is_not_prompt_injection():
         "    return client.chat.completions.create(model='m', messages=[{'role':'user','content': f'Summarize: {article}'}])"
     )
     assert "prompt-injection" not in rule_set(src)
+
+
+# --- R6 deprecated-model -----------------------------------------------------
+
+def test_retired_model_flagged_as_error():
+    src = 'client.chat.completions.create(model="gpt-3.5-turbo-0301", messages=[])'
+    assert "deprecated-model" in rule_set(src)
+
+
+def test_deprecated_model_flagged():
+    src = 'client.messages.create(model="claude-3-haiku-20240307", messages=[])'
+    assert "deprecated-model" in rule_set(src)
+
+
+def test_live_model_not_flagged():
+    # exact-match on the id, so live aliases must never trip
+    for m in ("gpt-4o", "gpt-4o-mini", "davinci-002", "claude-3-haiku", "claude-opus-4-8"):
+        src = f'client.chat.completions.create(model="{m}", messages=[])'
+        assert "deprecated-model" not in rule_set(src), m
+
+
+# --- R7 unsupported-params ---------------------------------------------------
+
+def test_temperature_on_reasoning_model_flagged():
+    src = 'client.chat.completions.create(model="o1", messages=[], temperature=0)'
+    assert "unsupported-params" in rule_set(src)
+
+
+def test_sampling_param_on_new_anthropic_flagged():
+    src = 'client.messages.create(model="claude-opus-4-8", messages=[], top_p=0.5)'
+    assert "unsupported-params" in rule_set(src)
+
+
+def test_temperature_on_sampling_model_not_flagged():
+    # opus 4.6 and gpt-4o still accept sampling params
+    for m in ("gpt-4o", "claude-opus-4-6"):
+        src = f'client.chat.completions.create(model="{m}", messages=[], temperature=0.3)'
+        assert "unsupported-params" not in rule_set(src), m
+
+
+def test_reasoning_model_without_sampling_params_not_flagged():
+    src = 'client.chat.completions.create(model="o1", messages=[])'
+    assert "unsupported-params" not in rule_set(src)

@@ -102,6 +102,8 @@ class LLMCall:
     loop_kind: str | None = None  # "batchable" | "necessary" | None (not in a loop)
     tainted: bool = False         # untrusted external input flows into the prompt
     snippet: str = ""
+    model: str | None = None      # the model id, when it is a plain string literal
+    params: frozenset = field(default_factory=frozenset)  # keyword arg names on the call
 
 
 # --- AST helpers -------------------------------------------------------------
@@ -611,6 +613,8 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str]) -> list[LLMCall]:
 
         line = getattr(node, "lineno", 0)
         snippet = source_lines[line - 1].strip() if 0 < line <= len(source_lines) else ""
+        model_kw = _kw(node, "model")
+        model = _const_str(resolve(model_kw)) if model_kw is not None else None
         calls.append(
             LLMCall(
                 node=node,
@@ -623,6 +627,8 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str]) -> list[LLMCall]:
                 loop_kind=_loop_kind(node, parents),
                 tainted=tainted,
                 snippet=snippet,
+                model=model.strip() if model else None,
+                params=frozenset(k.arg for k in node.keywords if k.arg),
             )
         )
     return calls

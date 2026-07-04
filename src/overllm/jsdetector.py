@@ -326,7 +326,14 @@ def find_llm_calls_js(source: str, lang: str) -> list[LLMCall]:
         obj = _object_arg(node)
         text, static, resolved = "", False, False
         p_nodes: list = []
+        model: str | None = None
+        params: frozenset = frozenset()
         if obj is not None:
+            pairs = _pairs(obj)
+            params = frozenset(pairs.keys())
+            if "model" in pairs:
+                mt, _ = _literal_text_and_static(pairs["model"], src, decls)
+                model = mt or None
             p_nodes, resolved = _prompt_nodes(obj, src, decls)
             if resolved and p_nodes:
                 parts = []
@@ -352,6 +359,8 @@ def find_llm_calls_js(source: str, lang: str) -> list[LLMCall]:
                 loop_kind=_loop_kind(node, src),
                 tainted=_prompt_tainted(p_nodes, src, decls, tainted) if p_nodes else False,
                 snippet=snippet,
+                model=model.strip() if model else None,
+                params=params,
             )
         )
     return calls
