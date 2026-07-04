@@ -67,11 +67,12 @@ By default overllm only raises **warning** and above, so it is quiet on your eve
 | `llm-in-loop` | warning | An LLM call runs once per loop iteration (real N calls, not streaming). | batch, cache, or move it out of the loop |
 | `deprecated-model` | error / warning | The `model` id is a retired model (the call 404s) or one that is deprecated and scheduled for removal. | switch to the current model it names |
 | `unsupported-params` | warning | `temperature` / `top_p` / `top_k` is set on a model that rejects them — the OpenAI reasoning (`o1`, `o3`, ...) series and the newest Anthropic models. | remove the parameter; steer with the prompt instead |
+| `json-mode-missing-json` | error | `response_format={"type": "json_object"}` is set but the fully-static prompt never contains the word "json" — a guaranteed OpenAI 400. | add "json" to a message, or use a `json_schema` format |
 | `static-prompt` | info | The user prompt is a compile-time constant, no variables. The input is fixed, so the call buys nothing. | precompute or cache the result |
 
 The last two check the call itself, not the prompt: a model id that no longer exists, or a knob the model ignores. Both are matched exactly against a known list, so a live model or alias is never flagged. The lists track provider deprecation pages and need updating over time.
 
-It detects the OpenAI, Anthropic, Google, Mistral, Cohere, Groq, AWS Bedrock, HuggingFace, Replicate, LangChain, LiteLLM, and Ollama SDKs in Python, the Vercel AI SDK (`generateText`, `streamText`, `generateObject`) and the openai / anthropic node SDKs in JavaScript and TypeScript, and raw HTTP requests to those hosts.
+It detects the OpenAI, Anthropic, Google, Mistral, Cohere, Groq, AWS Bedrock, HuggingFace, Replicate, LangChain, LiteLLM, and Ollama SDKs in Python, the Vercel AI SDK (`generateText`, `streamText`, `generateObject`) and the openai / anthropic node SDKs in JavaScript and TypeScript, and raw HTTP requests to those hosts. It also follows a model through **LCEL composition** — a `chain = prompt | model | parser` pipe, a bound model (`.with_structured_output(...)`), or an alias — so `chain.invoke(...)` is seen; embeddings calls (`embeddings.create`) count too. When a call goes through your own wrapper or a framework overllm can't see, name it in `llm_calls` (below).
 
 ## Silence a false positive
 

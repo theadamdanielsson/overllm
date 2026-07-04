@@ -3,6 +3,29 @@
 Notable changes per release. Versions follow [semantic versioning](https://semver.org);
 dates are the tag date.
 
+## 0.7.0 — 2026-07-05
+
+Recall improvements and a new rule, each validated on ~14k files of real code
+(framework-heavy *and* amateur) with no new false positives.
+
+- **Matured call detection — follow a model through composition.** Detection was
+  a fixed set of call shapes, so framework-mediated calls were invisible. overllm
+  now recognises an LLM call on any object that provably composes a known model —
+  through an LCEL `|` pipe, a bind/config method (`.with_structured_output`,
+  `.bind_tools`, …), or an alias — so LangChain `chain.invoke(...)` and
+  `structured_model.invoke(...)` are detected. A bare `prompt | parser` chain (no
+  model) or a plain `dict | dict` merge is not tracked, so the win stays precise.
+- **kwargs-splat.** `client.chat.completions.create(**params)` and the other
+  unambiguous chains are detected even when the model/messages hide in a dict.
+- **Embeddings.** `embeddings.create` in a per-item loop is flagged `llm-in-loop`
+  — batch it into one `input=[...]` call.
+- **Module-constant prompts.** A prompt or model id held in a top-level module
+  constant used inside a function is now resolved (the `prompts.py` pattern).
+- **New rule `json-mode-missing-json` (error).** Requesting
+  `response_format={"type": "json_object"}` with a fully static prompt that never
+  contains the word "json" is a guaranteed OpenAI 400. It fires only when every
+  message is statically readable, so the absence is proven, not merely unobserved.
+
 ## 0.6.2 — 2026-07-04
 
 Test-only fix; the 0.6.1 runtime code is unchanged. The deep-recursion regression

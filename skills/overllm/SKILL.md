@@ -1,7 +1,7 @@
 ---
 name: overllm
 description: Find the LLM call you didn't need — your GPT call is a regex. Static, zero-config linter that flags unnecessary GPT/Claude/AI API calls a regex, the stdlib, or a library already does (parsing dates, extracting emails/JSON, sorting, classifying with fixed labels). Runs locally, no model, no API key, nothing phones home. Python + JS/TS. Observability tells you what you spent; overllm finds the call you never should have made — cutting LLM/API cost as a result, not a promise.
-version: 1.1.2
+version: 1.2.0
 metadata:
   openclaw:
     emoji: 🔍
