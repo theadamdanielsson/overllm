@@ -24,10 +24,11 @@ LLM_MECHANICAL = "llm-mechanical"
 PROMPT_INJECTION = "prompt-injection"
 DEPRECATED_MODEL = "deprecated-model"
 UNSUPPORTED_PARAMS = "unsupported-params"
+JSON_MODE_MISSING = "json-mode-missing-json"
 
 ALL_RULES = (
     STATIC_PROMPT, LLM_EXTRACTION, LLM_IN_LOOP, LLM_MECHANICAL, PROMPT_INJECTION,
-    DEPRECATED_MODEL, UNSUPPORTED_PARAMS,
+    DEPRECATED_MODEL, UNSUPPORTED_PARAMS, JSON_MODE_MISSING,
 )
 
 # error   = clearly unnecessary call, a broken call, or a security risk (raise by default)
@@ -41,6 +42,7 @@ RULE_SEVERITY = {
     STATIC_PROMPT: "info",
     DEPRECATED_MODEL: "warning",   # per-finding: error when retired, warning when deprecated
     UNSUPPORTED_PARAMS: "warning",
+    JSON_MODE_MISSING: "error",     # a provable OpenAI 400
 }
 
 # (compiled pattern, human message, suggestion)
@@ -219,6 +221,19 @@ def run_rules(call: LLMCall, path: str) -> list[Finding]:
             call, path, PROMPT_INJECTION,
             "untrusted web-request input flows straight into this prompt, a prompt-injection risk",
             "keep external input in a separate user message (never the system prompt), validate it, and constrain what the model is allowed to do",
+        ))
+
+    # R8: JSON mode requested but the fully-static prompt never contains "json".
+    # OpenAI rejects response_format=json_object unless a message says "json" -- a
+    # guaranteed 400. Only fires when every message is statically readable, so the
+    # absence of the word is proven, not merely unobserved.
+    if call.json_object_mode and call.all_text_static and "json" not in call.all_text:
+        out.append(_finding(
+            call, path, JSON_MODE_MISSING,
+            'requests JSON mode (response_format={"type": "json_object"}) but no message contains '
+            'the word "json" -- OpenAI rejects this with a 400',
+            'add "json" to the system or user message, or use a json_schema response_format',
+            severity="error",
         ))
 
     # R6/R7: model hygiene -- a retired/deprecated model id, or a sampling

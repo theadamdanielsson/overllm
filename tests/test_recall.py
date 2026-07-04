@@ -84,3 +84,41 @@ def test_no_cross_function_name_bleed():
            '    return client.chat.completions.create(model="gpt-4o",\n'
            '        messages=[{"role":"user","content": p}])\n')
     assert "llm-extraction" not in _rules(src)
+
+
+# --- json-mode-missing-json (provable OpenAI 400) -----------------------------
+
+_JSON = ('client.chat.completions.create(model="gpt-4o", '
+         'response_format={{"type": "{fmt}"}}, messages=[{msgs}])')
+
+
+def test_json_mode_without_json_word_fires():
+    src = _JSON.format(fmt="json_object", msgs='{"role":"user","content":"summarize this document"}')
+    assert "json-mode-missing-json" in _rules(src)
+
+
+def test_json_mode_with_json_word_silent():
+    src = _JSON.format(fmt="json_object", msgs='{"role":"user","content":"return the result as json"}')
+    assert "json-mode-missing-json" not in _rules(src)
+
+
+def test_json_mode_word_in_system_message_silent():
+    src = _JSON.format(fmt="json_object",
+                       msgs='{"role":"system","content":"reply in json"},{"role":"user","content":"summarize"}')
+    assert "json-mode-missing-json" not in _rules(src)
+
+
+def test_json_mode_dynamic_prompt_silent():
+    # can't prove the word is absent if the prompt isn't statically readable
+    src = _JSON.format(fmt="json_object", msgs='{"role":"user","content":user_input}')
+    assert "json-mode-missing-json" not in _rules(src)
+
+
+def test_json_schema_mode_not_flagged():
+    src = _JSON.format(fmt="json_schema", msgs='{"role":"user","content":"summarize"}')
+    assert "json-mode-missing-json" not in _rules(src)
+
+
+def test_no_response_format_silent():
+    src = 'client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":"summarize"}])'
+    assert "json-mode-missing-json" not in _rules(src)
