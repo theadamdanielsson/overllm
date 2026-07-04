@@ -1,7 +1,7 @@
 ---
 name: overllm
 description: Find the LLM call you didn't need — your GPT call is a regex. Static, zero-config linter that flags unnecessary GPT/Claude/AI API calls a regex, the stdlib, or a library already does (parsing dates, extracting emails/JSON, sorting, classifying with fixed labels). Runs locally, no model, no API key, nothing phones home. Python + JS/TS. Observability tells you what you spent; overllm finds the call you never should have made — cutting LLM/API cost as a result, not a promise.
-version: 1.1.0
+version: 1.1.1
 metadata:
   openclaw:
     emoji: 🔍
@@ -20,9 +20,9 @@ library already does (parsing a date, extracting an email or JSON, sorting a
 list, classifying with a fixed set of labels). overllm finds the model calls you
 can delete outright; **cutting your LLM/API bill is the result, not the pitch.**
 
-Where the other tools sit: observability (Helicone, Langfuse) tells you what you
-already spent; routers and caches make a call cheaper. **overllm is the only one
-that asks whether the call should exist at all — statically, before you ship.**
+Cost dashboards (Helicone, Langfuse) tell you what you already spent, and caches
+make a call cheaper. Neither asks whether you needed the call. **overllm does —
+from the source, before anything runs.**
 
 overllm is a static, zero-config linter. It parses code locally (Python via the
 stdlib `ast`, JavaScript/TypeScript via tree-sitter), runs **no model**, makes
@@ -108,6 +108,9 @@ signal.
 
 ## What it does not do
 
-It does not lint the code an AI wrote, does not run or call any model, and does
-not change files — it only reads and reports. Running it is safe: worst case is
-a few lines of output.
+It does not lint the code an AI wrote and never runs or calls a model. By
+default it only reads and reports — a plain scan changes nothing, worst case a
+few lines of output. The one exception is the opt-in `--fix` flag (see Useful
+flags above): it edits files, and only for the two mechanically-safe fixes
+(re-parsed before writing, so it never breaks a file). A scan without `--fix`
+is always read-only.

@@ -8,7 +8,7 @@ overllm is a small, fast linter with one job: find the places in your code where
 
 It reads your code with a real parser: Python through the standard-library `ast`, and JavaScript and TypeScript through tree-sitter. No model runs, no network, no API key. Same code in, same result out. Fast enough for a pre-commit hook.
 
-Observability tells you what you already spent. Routers and caches make the call cheaper. overllm is the only one that finds the call you never needed — statically, before you ship. Everyone else lints the code the AI wrote; overllm catches where you pay an AI to do what a library already does.
+Cost dashboards and caches deal with calls you've already decided to make. overllm asks the earlier question — did you need the call at all — and answers it from the source, before you run anything. Everyone else lints the code the AI wrote; overllm catches where you're paying an AI to do what a library already does.
 
 ## Install
 
@@ -27,7 +27,7 @@ overllm src/         # a folder
 overllm .            # the whole project
 ```
 
-It reads your code and prints what it finds. It writes nothing and changes nothing — the worst case of running it is a few lines of output.
+It reads your code and prints what it finds. By default it writes nothing and changes nothing — the worst case of a plain run is a few lines of output. The one mode that edits files is the opt-in `--fix` (below), and only for the two mechanically-safe fixes.
 
 Example output:
 
@@ -51,7 +51,7 @@ overllm exits non-zero when it finds something, so it gates a commit or a CI che
 
 overllm is static analysis. It parses your files locally, then prints what it found. It never uploads your code, never calls an API, needs no key, and sends no telemetry — there is no model in the loop and nothing phones home. Pull your network cable and it runs exactly the same.
 
-The core is a few hundred lines of Python with no required dependencies, so you can read all of it before you trust it. `overllm[js]` adds tree-sitter to parse JavaScript and TypeScript; that is the only optional dependency.
+The core is a couple thousand lines of Python with no required dependencies, so you can read all of it before you trust it. `overllm[js]` adds tree-sitter to parse JavaScript and TypeScript; that is the only optional dependency.
 
 ## Rules
 
@@ -97,18 +97,12 @@ Or on the command line: `--select`, `--ignore`, `--min-severity`, `--all`, and `
 
 ### Teaching overllm your own wrapper
 
-overllm follows a project's own LLM wrapper automatically when the wrapper calls
-the SDK directly in the same file (`def ask(prompt): client.chat.completions.create(...)`).
-When the call goes through a framework, a provider layer, or a `**kwargs` splat —
-so the SDK call isn't statically visible — declare the wrapper by name in
-`llm_calls`. Calls to it are then treated as LLM calls: their prompt argument is
-read, and loop/cost rules apply. Entries match a bare name (`ask`), a dotted path
-(`myapp.llm.ask`), or that path imported by its short name.
+Most code doesn't call the SDK inline — it wraps it (`def ask(prompt): client.chat.completions.create(...)`). overllm follows that wrapper on its own when it lives in the same file. When the call goes through a framework, a provider layer, or a `**kwargs` splat, overllm can't see the SDK call, so tell it the wrapper's name in `llm_calls`. After that, calls to `ask(...)` are treated like LLM calls — it reads the prompt argument and runs the loop and cost rules. A name matches bare (`ask`), dotted (`myapp.llm.ask`), or that dotted path imported under its short name.
 
 ## Adopt on an existing codebase (baseline)
 
-On a repo with pre-existing findings, snapshot them once and let CI gate only on
-*new* ones — so overllm can't drown you on day one:
+Dropping overllm on an old repo gives you a wall of findings you'll never get
+through. Snapshot them once and have CI flag only what's new after that:
 
 ```bash
 overllm . --write-baseline        # writes overllm-baseline.json — commit it
@@ -116,10 +110,27 @@ overllm . --baseline              # reports only findings new since the snapshot
 overllm . --update-baseline       # ratchet: also drop entries you've since fixed
 ```
 
-The baseline is fingerprinted by rule + file + code + model, **not** by line
-number, so edits elsewhere in a file don't churn it, and it counts occurrences
-rather than netting them — a genuinely new wasteful call still fires even if an
-old one was deleted.
+The snapshot keys each finding on rule + file + code + model, not the line
+number, so unrelated edits above it don't invalidate it. And it counts how many
+times each one shows up instead of just diffing totals, so a new bad call still
+trips the check even if you happened to delete an old one somewhere else.
+
+## Fix what's safe (`--fix`)
+
+Two of the rules have one obvious fix, so overllm can just do it for you:
+
+```bash
+overllm . --fix                  # drop a sampling param the model rejects (safe)
+overllm . --fix --unsafe-fixes   # also swap a retired model id for its replacement
+overllm . --fix --diff           # print the patch, don't touch anything
+```
+
+Plain `--fix` only does the safe one (`unsupported-params`). Swapping a model id
+changes what your code actually does at runtime, so that's behind
+`--unsafe-fixes`. Fixes edit the syntax tree, not the raw text, so your comments
+and strings are left alone, and overllm re-parses the file before saving — if the
+edit would break it, it's dropped. The other five rules need a human call, so it
+never touches them.
 
 ## Pre-commit hook
 
@@ -167,8 +178,8 @@ overllm --format markdown .  # the PR-comment body
 
 ## GitHub code scanning (SARIF)
 
-overllm emits SARIF, so findings can land in the Security tab and inline on the
-diff — the low-noise, deduped surface, free on public repos:
+overllm can output SARIF, so findings show up in the Security tab and inline on
+the diff. It's free on public repos:
 
 ```yaml
 name: overllm-scan

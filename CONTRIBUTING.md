@@ -43,6 +43,8 @@ be clean on its own source. Run both before you open a PR.
 | `src/overllm/detector.py` | Finds LLM calls in a Python AST and extracts the prompt (variable resolution, taint, loop classification). |
 | `src/overllm/jsdetector.py` | The same, for JavaScript and TypeScript via tree-sitter. |
 | `src/overllm/rules.py` | Turns a detected call into findings. This is where the rule patterns live. |
+| `src/overllm/baseline.py` | Fingerprints findings for `--baseline` / ratchet mode. |
+| `src/overllm/fix.py` | Computes and applies the safe `--fix` edits (AST-anchored). |
 | `src/overllm/config.py` | Loads `[tool.overllm]` / `.overllm.toml`. |
 | `scripts/scan_corpus.py` | Runs overllm across real GitHub repos to measure precision. |
 
