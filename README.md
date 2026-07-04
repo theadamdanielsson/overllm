@@ -8,7 +8,7 @@ overllm is a small, fast linter with one job: find the places in your code where
 
 It reads your code with a real parser: Python through the standard-library `ast`, and JavaScript and TypeScript through tree-sitter. No model runs, no network, no API key. Same code in, same result out. Fast enough for a pre-commit hook.
 
-Everyone else lints the code the AI wrote. overllm catches where you are paying an AI to do what a library already does.
+Observability tells you what you already spent. Routers and caches make the call cheaper. overllm is the only one that finds the call you never needed — statically, before you ship. Everyone else lints the code the AI wrote; overllm catches where you pay an AI to do what a library already does.
 
 ## Install
 
@@ -90,9 +90,36 @@ In `pyproject.toml` (Python 3.11+):
 [tool.overllm]
 ignore = ["llm-in-loop"]
 exclude = ["examples/", "migrations/"]
+llm_calls = ["myapp.llm.ask", "chat_service.complete"]
 ```
 
 Or on the command line: `--select`, `--ignore`, `--min-severity`, `--all`, and `--config PATH` (`exclude` is config-only). Run `overllm --help` for the full list.
+
+### Teaching overllm your own wrapper
+
+overllm follows a project's own LLM wrapper automatically when the wrapper calls
+the SDK directly in the same file (`def ask(prompt): client.chat.completions.create(...)`).
+When the call goes through a framework, a provider layer, or a `**kwargs` splat —
+so the SDK call isn't statically visible — declare the wrapper by name in
+`llm_calls`. Calls to it are then treated as LLM calls: their prompt argument is
+read, and loop/cost rules apply. Entries match a bare name (`ask`), a dotted path
+(`myapp.llm.ask`), or that path imported by its short name.
+
+## Adopt on an existing codebase (baseline)
+
+On a repo with pre-existing findings, snapshot them once and let CI gate only on
+*new* ones — so overllm can't drown you on day one:
+
+```bash
+overllm . --write-baseline        # writes overllm-baseline.json — commit it
+overllm . --baseline              # reports only findings new since the snapshot
+overllm . --update-baseline       # ratchet: also drop entries you've since fixed
+```
+
+The baseline is fingerprinted by rule + file + code + model, **not** by line
+number, so edits elsewhere in a file don't churn it, and it counts occurrences
+rather than netting them — a genuinely new wasteful call still fires even if an
+old one was deleted.
 
 ## Pre-commit hook
 
@@ -101,7 +128,7 @@ In `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/theadamdanielsson/overllm
-    rev: v0.4.0
+    rev: v0.6.0
     hooks:
       - id: overllm
 ```
@@ -134,7 +161,31 @@ jobs:
 ```bash
 overllm --format json .      # machine-readable
 overllm --format sarif .     # upload to GitHub code scanning
+overllm --format github .    # GitHub Actions inline annotations
 overllm --format markdown .  # the PR-comment body
+```
+
+## GitHub code scanning (SARIF)
+
+overllm emits SARIF, so findings can land in the Security tab and inline on the
+diff — the low-noise, deduped surface, free on public repos:
+
+```yaml
+name: overllm-scan
+on: [push, pull_request]
+permissions:
+  contents: read
+  security-events: write   # required to upload results
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pipx run overllm . --format sarif --exit-zero > overllm.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: overllm.sarif
+          category: overllm
 ```
 
 ## Use it from an agent (MCP server)

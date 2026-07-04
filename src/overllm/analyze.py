@@ -106,7 +106,7 @@ def analyze_file(path: Path, config: Config) -> list[Finding]:
             tree = ast.parse(source, filename=str(path))
         except (SyntaxError, ValueError):
             return []  # not our job to report parse errors; stay quiet
-        calls = find_llm_calls(tree, lines)
+        calls = find_llm_calls(tree, lines, config.llm_calls)
 
     findings: list[Finding] = []
     seen: set[tuple] = set()

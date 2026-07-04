@@ -41,7 +41,8 @@ runs:
         set +e
         "$BIN" --format markdown ${{ inputs.paths }} > "$RUNNER_TEMP/overllm.md"
         echo "found=$?" >> "$GITHUB_OUTPUT"
-        "$BIN" ${{ inputs.paths }} --no-color
+        "$BIN" --format github ${{ inputs.paths }}   # inline annotations on the diff
+        "$BIN" ${{ inputs.paths }} --no-color        # readable copy in the job log
         exit 0
 
     - name: Comment on PR

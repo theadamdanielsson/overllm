@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "overllm"
-version = "0.5.1"
+version = "0.6.0"
 description = "Catch the LLM/AI calls you didn't need. A fast, deterministic linter that flags LLM API calls where plain code is simpler, cheaper, and more reliable."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 authors = [{ name = "Adam Danielsson", email = "the.adam.danielsson@gmail.com" }]
-keywords = ["linter", "llm", "ai", "static-analysis", "pre-commit", "openai", "anthropic", "cost", "code-quality"]
+keywords = ["linter", "llm", "ai", "static-analysis", "pre-commit", "openai", "anthropic", "cost", "code-quality", "gpt", "claude", "llm-cost", "llm-linter", "tokens", "prompt"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",

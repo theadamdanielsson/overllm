@@ -3,6 +3,56 @@
 Notable changes per release. Versions follow [semantic versioning](https://semver.org);
 dates are the tag date.
 
+## 0.6.0 — 2026-07-04
+
+- **Wrapper recall.** overllm now follows a project's own LLM wrapper. When a
+  function calls the SDK directly and one of its parameters feeds the prompt
+  (`def ask(prompt): client.chat.completions.create(...)`), calls to that
+  function are analyzed too — their prompt argument is read and loop/cost rules
+  apply. This catches the common case where the waste is at the call site, not
+  inside the wrapper. Same-file, unambiguous names only; method wrappers match
+  `self.<name>(...)`; a `**kwargs` splat is left alone (a precision choice).
+- **`llm_calls` config allowlist.** Declare your own wrapper by name
+  (`[tool.overllm] llm_calls = ["myapp.llm.ask"]`) to reach calls that go through
+  a framework, a provider layer, or a `**kwargs` splat, where the SDK call isn't
+  statically visible. Validated on real repos: unlocked 29 previously-invisible
+  calls in a provider-mediated codebase.
+- **Baseline / ratchet mode.** `--write-baseline` snapshots current findings to
+  `overllm-baseline.json`; `--baseline` then reports only findings new since the
+  snapshot, and `--update-baseline` prunes ones you've fixed. Fingerprints key on
+  rule + file + code + model (no line number), so they survive edits elsewhere,
+  and count occurrences instead of netting them, so a new wasteful call still
+  fires even when an old one was removed. This lets a legacy repo adopt overllm
+  in one command without drowning in pre-existing findings.
+- **Wrapper recall.** overllm now follows a project's own LLM wrapper. When a
+  function calls the SDK directly and one of its parameters feeds the prompt
+  (`def ask(prompt): client.chat.completions.create(...)`), calls to that
+  function are analyzed too — their prompt argument is read and loop/cost rules
+  apply. This catches the common case where the waste is at the call site, not
+  inside the wrapper. Same-file, unambiguous names only; method wrappers match
+  `self.<name>(...)`; a `**kwargs` splat is left alone (a precision choice).
+- **`llm_calls` config allowlist.** Declare your own wrapper by name
+  (`[tool.overllm] llm_calls = ["myapp.llm.ask"]`) to reach calls that go through
+  a framework, a provider layer, or a `**kwargs` splat, where the SDK call isn't
+  statically visible. Validated on real repos: unlocked 29 previously-invisible
+  calls in a provider-mediated codebase.
+- **Concurrency-aware `llm-in-loop`.** A call dispatched per item into an
+  `asyncio.gather` / `as_completed` now says the cost scales N× but latency is
+  amortized, instead of claiming N latencies.
+- **`--fix` (safe autofix).** Applies only the two mechanically-exact fixes:
+  removes a sampling param a model rejects (`unsupported-params`, safe), and —
+  gated behind `--unsafe-fixes` — swaps a retired/deprecated model id for its
+  replacement (`deprecated-model`). `--diff` previews the patch without writing.
+  Edits are AST-anchored (never a regex on source, so strings and comments are
+  untouched), non-overlapping, and the result is re-parsed so a fix can never
+  leave a file that won't compile. The five judgment rules are never auto-applied.
+  Validated: on a 508-file repo, all files still parsed and every targeted
+  finding cleared, idempotently.
+- **`--format github`.** Emits GitHub Actions workflow-command annotations, so
+  findings show inline on the PR diff. The Action now prints these too.
+- **SARIF → code scanning.** A documented workflow to upload `--format sarif`
+  results via `github/codeql-action/upload-sarif` (free on public repos).
+
 ## 0.5.1 — 2026-07-04
 
 - Gate the `mcp` dependency to Python 3.10+ (the MCP SDK requires it), so the

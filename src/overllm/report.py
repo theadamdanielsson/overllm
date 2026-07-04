@@ -117,6 +117,32 @@ def format_sarif(findings: list[Finding]) -> str:
     return json.dumps(sarif, indent=2)
 
 
+_GH_LEVEL = {"error": "error", "warning": "warning", "info": "notice"}
+
+
+def _gh_data(s: str) -> str:
+    return s.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _gh_prop(s: str) -> str:
+    return _gh_data(s).replace(":", "%3A").replace(",", "%2C")
+
+
+def format_github(findings: list[Finding]) -> str:
+    """GitHub Actions workflow commands. Any step that prints these gets inline
+    annotations on the PR diff and in the Checks tab -- the low-spam surface Ruff
+    uses via `--output-format=github`."""
+    lines: list[str] = []
+    for f in findings:
+        level = _GH_LEVEL.get(f.severity, "warning")
+        msg = f"{f.rule}: {f.message}"
+        if f.suggestion:
+            msg += f" -> {f.suggestion}"
+        loc = f"file={_gh_prop(f.path)},line={max(f.line, 1)},col={f.col + 1}"
+        lines.append(f"::{level} {loc},title={_gh_prop('overllm ' + f.rule)}::{_gh_data(msg)}")
+    return "\n".join(lines)
+
+
 _MARKER = "<!-- overllm-report -->"
 
 
@@ -159,4 +185,6 @@ def render(findings: list[Finding], fmt: str, use_color: bool = True) -> str:
         return format_sarif(findings)
     if fmt == "markdown":
         return format_markdown(findings)
+    if fmt == "github":
+        return format_github(findings)
     return format_human(findings, use_color=use_color)
