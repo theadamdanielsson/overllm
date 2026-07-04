@@ -122,3 +122,33 @@ def test_json_schema_mode_not_flagged():
 def test_no_response_format_silent():
     src = 'client.chat.completions.create(model="gpt-4o", messages=[{"role":"user","content":"summarize"}])'
     assert "json-mode-missing-json" not in _rules(src)
+
+
+# --- matured definition: composition tracking (LCEL pipe / bound model) --------
+
+_LC = ("from langchain_openai import ChatOpenAI\n"
+       "from langchain_core.prompts import ChatPromptTemplate\n")
+
+
+def test_lcel_chain_invoke_in_loop_flagged():
+    src = _LC + ('chain = ChatPromptTemplate.from_template("q") | ChatOpenAI(model="gpt-4o")\n'
+                 "for q in qs:\n    chain.invoke(q)\n")
+    assert "llm-in-loop" in _rules(src)
+
+
+def test_bound_model_invoke_in_loop_flagged():
+    src = _LC + ("m = ChatOpenAI(model=\"gpt-4o\").with_structured_output(S)\n"
+                 "for r in rows:\n    m.invoke(r)\n")
+    assert "llm-in-loop" in _rules(src)
+
+
+def test_prompt_parser_chain_without_model_not_flagged():
+    # a chain with NO model (prompt | parser) is not an LLM object -> no FP
+    src = ('chain = ChatPromptTemplate.from_template("x") | StrOutputParser()\n'
+           "for q in qs:\n    chain.invoke(q)\n")
+    assert "llm-in-loop" not in _rules(src)
+
+
+def test_dict_merge_pipe_not_flagged():
+    src = "merged = a | b\nfor x in xs:\n    merged.invoke(x)\n"
+    assert "llm-in-loop" not in _rules(src)
