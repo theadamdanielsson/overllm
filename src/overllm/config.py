@@ -26,6 +26,7 @@ class Config:
     ignore: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
     min_severity: str = "warning"
+    llm_calls: tuple[str, ...] = ()  # user-declared LLM wrapper names, e.g. "myapp.llm.ask"
 
     def enabled(self, rule: str) -> bool:
         return rule in self.select and rule not in self.ignore
@@ -71,4 +72,6 @@ def load_config(start: Path | None = None, explicit: Path | None = None) -> Conf
     min_severity = table.get("min_severity", "warning")
     if min_severity not in SEVERITY_RANK:
         min_severity = "warning"
-    return Config(select=select, ignore=ignore, exclude=exclude, min_severity=min_severity)
+    llm_calls = tuple(str(c) for c in table.get("llm_calls", ()) if str(c).strip())
+    return Config(select=select, ignore=ignore, exclude=exclude,
+                  min_severity=min_severity, llm_calls=llm_calls)

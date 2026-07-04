@@ -24,6 +24,7 @@ class Finding:
     suggestion: str = ""
     severity: str = "warning"
     snippet: str = ""
+    model: str | None = None  # the call's model id when it is a plain string literal
 
     @property
     def key(self) -> tuple:

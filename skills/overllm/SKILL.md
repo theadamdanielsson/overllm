@@ -1,7 +1,7 @@
 ---
 name: overllm
-description: Reduce LLM and API costs — find the wasteful, unnecessary GPT/Claude/AI calls where plain code, a library, or a regex does the job cheaper, faster, and deterministically. Static linter, runs locally, no model, no API key.
-version: 1.0.2
+description: Find the LLM call you didn't need — your GPT call is a regex. Static, zero-config linter that flags unnecessary GPT/Claude/AI API calls a regex, the stdlib, or a library already does (parsing dates, extracting emails/JSON, sorting, classifying with fixed labels). Runs locally, no model, no API key, nothing phones home. Python + JS/TS. Observability tells you what you spent; overllm finds the call you never should have made — cutting LLM/API cost as a result, not a promise.
+version: 1.1.0
 metadata:
   openclaw:
     emoji: 🔍
@@ -11,18 +11,41 @@ metadata:
       bins: [overllm]
 ---
 
-# overllm — the needless-LLM-call linter
+# overllm — find the LLM call you didn't need
 
-Use this skill to **cut LLM and API costs** by auditing a codebase for
-**wasteful or unnecessary GPT/Claude/LLM calls** — cases where you're paying
-latency, money, and nondeterminism for something a library or a regex already
-does (parsing a date, extracting JSON, sorting a list, classifying with a fixed
-set of labels). It reduces token spend by finding the model calls you can
-delete outright.
+**Your GPT call is a regex.** Use this skill to audit a codebase for
+**wasteful or unnecessary GPT/Claude/LLM API calls** — the ones where you pay
+latency, money, and nondeterminism for something a regex, the stdlib, or a
+library already does (parsing a date, extracting an email or JSON, sorting a
+list, classifying with a fixed set of labels). overllm finds the model calls you
+can delete outright; **cutting your LLM/API bill is the result, not the pitch.**
 
-overllm is a static linter. It parses code locally (Python via the stdlib `ast`,
-JavaScript/TypeScript via tree-sitter), runs **no model**, makes **no network
-call**, and needs **no API key**. Same code in, same result out.
+Where the other tools sit: observability (Helicone, Langfuse) tells you what you
+already spent; routers and caches make a call cheaper. **overllm is the only one
+that asks whether the call should exist at all — statically, before you ship.**
+
+overllm is a static, zero-config linter. It parses code locally (Python via the
+stdlib `ast`, JavaScript/TypeScript via tree-sitter), runs **no model**, makes
+**no network call**, needs **no API key**, and **sends no telemetry** — nothing
+phones home. Same code in, same result out.
+
+## Your GPT call is a regex — see it
+
+```python
+# before — a paid, nondeterministic API round-trip to pull an email out of text
+email = client.chat.completions.create(
+    model="gpt-4o",
+    messages=[{"role": "user", "content": f"extract the email from: {text}"}],
+).choices[0].message.content
+
+# after — free, instant, deterministic
+import re
+email = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", text)
+```
+
+overllm flags the first as `llm-extraction` and points you straight at the fix.
+It is **not** an "AI slop" / AI-generated-code detector — it flags wasteful AI
+*usage* (calls that shouldn't exist), not AI-written code smell.
 
 ## When to use
 
@@ -60,8 +83,12 @@ Useful flags:
 - `--all` — also surface the `static-prompt` info-level rule (quiet by default).
 - `--min-severity {error,warning,info}` — default shows `warning` and above.
 - `--select <ids>` / `--ignore <ids>` — comma-separated rule ids to run or skip.
-- `--format {human,json,sarif,markdown}` — use `json` to reason over findings,
-  `markdown` when the user wants a report to paste somewhere.
+- `--format {human,json,sarif,markdown,github}` — use `json` to reason over
+  findings, `markdown` for a pasteable report, `github` for CI annotations.
+- `--baseline` / `--write-baseline` — adopt on an existing repo: snapshot current
+  findings, then report only new ones.
+- `--fix` (safe) / `--fix --unsafe-fixes` / `--diff` — auto-remove a rejected
+  sampling param, or (unsafe) swap a retired model id; `--diff` previews.
 
 ## How to present findings
 

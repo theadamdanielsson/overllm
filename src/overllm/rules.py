@@ -160,6 +160,7 @@ def _finding(call: LLMCall, path: str, rule: str, message: str, suggestion: str,
         suggestion=suggestion,
         severity=severity or RULE_SEVERITY.get(rule, "warning"),
         snippet=call.snippet,
+        model=call.model,
     )
 
 
@@ -198,11 +199,19 @@ def run_rules(call: LLMCall, path: str) -> list[Finding]:
     # R3: an LLM call in a batchable loop - one API round-trip per item, where the
     # items are independent (not a while/retry/conversation loop). Real savings.
     if call.loop_kind == "batchable":
-        out.append(_finding(
-            call, path, LLM_IN_LOOP,
-            "LLM call inside a per-item loop: one API round-trip per iteration (N calls, N latencies, N times the cost)",
-            "batch the items into a single call, cache repeated results, or if the per-item work is deterministic use a function",
-        ))
+        if call.loop_concurrent:
+            # dispatched via asyncio.gather/as_completed: cost still scales N x, but
+            # latency is already amortized, so do not claim N latencies.
+            msg = ("LLM call dispatched once per item into a concurrent gather: N calls, "
+                   "so N times the token cost (latency is amortized by the concurrency)")
+            sug = ("batch the items into one call or cache repeated results to cut token "
+                   "cost; the concurrency already handles latency")
+        else:
+            msg = ("LLM call inside a per-item loop: one API round-trip per iteration "
+                   "(N calls, N latencies, N times the cost)")
+            sug = ("batch the items into a single call, cache repeated results, or if the "
+                   "per-item work is deterministic use a function")
+        out.append(_finding(call, path, LLM_IN_LOOP, msg, sug))
 
     # R5: untrusted external input flows straight into the prompt.
     if call.tainted:

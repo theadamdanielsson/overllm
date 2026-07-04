@@ -95,11 +95,12 @@ class LLMCall:
     node: ast.Call
     line: int
     col: int
-    api: str                      # openai_like | anthropic | google | positional | ollama_chat | ollama_generate | http
+    api: str                      # openai_like | anthropic | google | positional | ollama_chat | ollama_generate | http | wrapper
     prompt_text: str = ""         # lowercased visible literal text of the user prompt
     prompt_static: bool = False   # the user prompt is a compile-time constant
     prompt_resolved: bool = False # we could locate and read the user prompt
     loop_kind: str | None = None  # "batchable" | "necessary" | None (not in a loop)
+    loop_concurrent: bool = False # a batchable loop dispatched via asyncio.gather/as_completed
     tainted: bool = False         # untrusted external input flows into the prompt
     snippet: str = ""
     model: str | None = None      # the model id, when it is a plain string literal
@@ -481,6 +482,179 @@ def _has_llm_host_arg(call: ast.Call) -> bool:
     return any(host in joined for host in LLM_HOSTS)
 
 
+# --- Wrapper functions: a project's own LLM abstraction ----------------------
+# Real code rarely calls the SDK inline; it wraps it (`def ask(prompt): ...
+# client.chat.completions.create(...)`). Detect a function whose body makes a
+# known LLM call fed by one of the function's own parameters, then treat calls
+# to that function as LLM calls whose prompt is the mapped argument. Guards that
+# keep precision: same file only, the name must be unambiguous, and a method
+# wrapper matches `self.<name>(...)` alone -- so an unrelated `run()`/`ask()` is
+# never mistaken for an LLM call.
+
+@dataclass
+class _Wrapper:
+    name: str
+    inner_call: ast.Call  # the SDK call inside the wrapper body
+    api: str
+    param_index: dict     # param_name -> call-site positional index (-1 = kw-only)
+    is_method: bool
+
+
+def _callable_param_index(fn: ast.AST) -> tuple[dict, bool]:
+    """Map each param to the positional index it has AT A CALL SITE (self stripped)."""
+    params = list(getattr(fn.args, "posonlyargs", [])) + list(fn.args.args)
+    names = [a.arg for a in params]
+    is_method = bool(names) and names[0] in ("self", "cls")
+    if is_method:
+        names = names[1:]
+    index = {n: i for i, n in enumerate(names)}
+    for a in fn.args.kwonlyargs:  # keyword-only params: reachable by name only
+        index.setdefault(a.arg, -1)
+    return index, is_method
+
+
+def _slot_value_nodes(call: ast.Call, api: str) -> list:
+    """Raw expression(s) sitting in the call's prompt slot, before extraction."""
+    vals: list = []
+    for name in ("messages", "prompt", "input", "contents"):
+        v = _kw(call, name)
+        if v is not None:
+            vals.append(v)
+    if not vals and call.args:
+        vals.append(call.args[0])
+    return vals
+
+
+def _find_wrappers(tree: ast.AST, ctx: "_Context") -> dict:
+    found: dict = {}
+    ambiguous: set = set()
+    for fn in ast.walk(tree):
+        if not isinstance(fn, FUNC_NODES):
+            continue
+        index, is_method = _callable_param_index(fn)
+        if not index:
+            continue
+        for call in ast.walk(fn):
+            if not isinstance(call, ast.Call):
+                continue
+            api = _classify(call, ctx)
+            if api is None or api in ("http", "generic"):
+                continue
+            # register only if one of the function's params feeds the prompt slot
+            # (a `**kwargs` splat has no literal slot, so those stay unhandled -- a
+            # deliberate precision choice, not an oversight).
+            dep = any(
+                isinstance(sub, ast.Name) and sub.id in index
+                for v in _slot_value_nodes(call, api)
+                for sub in ast.walk(v)
+            )
+            if dep:
+                if fn.name in found:
+                    ambiguous.add(fn.name)
+                found[fn.name] = _Wrapper(fn.name, call, api, index, is_method)
+            break  # the function's first LLM call defines it as a wrapper
+    for name in ambiguous:
+        found.pop(name, None)
+    return found
+
+
+def _match_wrapper_call(call: ast.Call, wrappers: dict):
+    f = call.func
+    if isinstance(f, ast.Name):
+        w = wrappers.get(f.id)
+        return w if (w is not None and not w.is_method) else None
+    if isinstance(f, ast.Attribute):
+        w = wrappers.get(f.attr)
+        if w is not None and w.is_method and isinstance(f.value, ast.Name) and f.value.id in ("self", "cls"):
+            return w
+    return None
+
+
+# --- Config allowlist: user-declared LLM call surface ------------------------
+# A team's own abstraction (`myapp.llm.ask(...)`, a provider method) is invisible
+# to the signature whitelist, especially across files. `[tool.overllm] llm_calls`
+# lets the user declare it by name; those calls are then treated as LLM calls and
+# their arguments read for a prompt. Because the user opted in, matching by the
+# trailing name is acceptable -- they own the precision trade-off.
+
+def _callable_name(call: ast.Call) -> tuple[str | None, str | None]:
+    f = call.func
+    if isinstance(f, ast.Name):
+        return f.id, None
+    if isinstance(f, ast.Attribute):
+        return f.attr, _dotted(f)
+    return None, None
+
+
+def _match_allowlist(call: ast.Call, allow: tuple) -> bool:
+    if not allow:
+        return False
+    name, dotted = _callable_name(call)
+    if name is None:
+        return False
+    for entry in allow:
+        if "." in entry:
+            if dotted == entry or (dotted and dotted.endswith("." + entry)):
+                return True
+            if isinstance(call.func, ast.Name) and name == entry.rsplit(".", 1)[-1]:
+                return True  # imported into scope by its short name
+        elif name == entry:
+            return True
+    return False
+
+
+_CONCURRENT_FUNCS = {"gather", "as_completed", "wait"}
+
+
+def _is_concurrent_dispatch(node: ast.AST, parents: dict) -> bool:
+    """True when the batchable call sits in a comprehension handed to
+    asyncio.gather / as_completed -- N calls, but latency is amortized."""
+    child = node
+    cur = parents.get(id(child))
+    while cur is not None and not isinstance(cur, (ast.ListComp, ast.SetComp, ast.GeneratorExp, ast.DictComp)):
+        if isinstance(cur, FUNC_NODES):
+            return False
+        child = cur
+        cur = parents.get(id(child))
+    if cur is None:
+        return False
+    child = cur  # the comprehension
+    cur = parents.get(id(child))
+    for _ in range(4):
+        if cur is None:
+            return False
+        if isinstance(cur, ast.Call):
+            return _callable_name(cur)[0] in _CONCURRENT_FUNCS
+        if isinstance(cur, (ast.Starred, ast.List, ast.Tuple, ast.keyword)):
+            child = cur
+            cur = parents.get(id(child))
+            continue
+        return False
+    return False
+
+
+def _wrapper_extract(callsite: ast.Call, w: "_Wrapper", callsite_resolve) -> tuple[str, bool, bool, list]:
+    """Inline the call-site arguments into the wrapper's inner call, then run the
+    normal prompt extraction. This handles both a raw string/content param and a
+    whole `messages=`/`prompt=` param passed straight through."""
+    subst: dict = {}
+    for name, idx in w.param_index.items():
+        arg = _kw(callsite, name)
+        if arg is None and 0 <= idx < len(callsite.args):
+            arg = callsite.args[idx]
+        if arg is not None:
+            subst[name] = callsite_resolve(arg)
+
+    def resolve(n):
+        if isinstance(n, ast.Name) and n.id in subst:
+            return subst[n.id]
+        return callsite_resolve(n)
+
+    text, static, resolved = _extract_prompt(w.inner_call, w.api, resolve)
+    p_nodes, _ = _prompt_nodes(w.inner_call, w.api, resolve)
+    return text, static, resolved, p_nodes
+
+
 # --- Loop ancestry -----------------------------------------------------------
 
 def _build_parents(tree: ast.AST) -> dict[int, ast.AST]:
@@ -581,9 +755,10 @@ def _enclosing_scope(node: ast.AST, parents: dict[int, ast.AST]) -> ast.AST | No
 
 # --- Entry point -------------------------------------------------------------
 
-def find_llm_calls(tree: ast.AST, source_lines: list[str]) -> list[LLMCall]:
+def find_llm_calls(tree: ast.AST, source_lines: list[str], allow: tuple = ()) -> list[LLMCall]:
     ctx = _Context()
     ctx.scan(tree)
+    wrappers = _find_wrappers(tree, ctx)
     parents = _build_parents(tree)
     taint_cache: dict[int, set[str]] = {}
     assign_cache: dict[int, dict[str, ast.expr]] = {}
@@ -593,8 +768,17 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str]) -> list[LLMCall]:
         if not isinstance(node, ast.Call):
             continue
         api = _classify(node, ctx)
+        wrapper = None
         if api is None:
-            continue
+            wrapper = _match_wrapper_call(node, wrappers)
+            if wrapper is not None:
+                api = "wrapper"
+            elif _match_allowlist(node, allow):
+                # user-declared surface: read the prompt from its own args like a
+                # normal call (messages=/prompt=/contents=/first positional).
+                api = "google" if _kw(node, "contents") is not None else "openai_like"
+            else:
+                continue
 
         scope = _enclosing_scope(node, parents) or tree
         sid = id(scope)
@@ -604,17 +788,28 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str]) -> list[LLMCall]:
         def resolve(n, _a=assign_cache[sid]):
             return _resolve(n, _a)
 
-        text, static, resolved = _extract_prompt(node, api, resolve)
+        if wrapper is not None:
+            # A call to the project's own wrapper: inline the call-site args into
+            # the wrapper's inner SDK call, resolved in the CALL SITE's scope.
+            # Model/params live inside the wrapper (already covered at its def).
+            text, static, resolved, p_nodes = _wrapper_extract(node, wrapper, resolve)
+            model = None
+            params: frozenset = frozenset()
+        else:
+            text, static, resolved = _extract_prompt(node, api, resolve)
+            p_nodes, _ = _prompt_nodes(node, api, resolve)
+            model_kw = _kw(node, "model")
+            m = _const_str(resolve(model_kw)) if model_kw is not None else None
+            model = m.strip() if m else None
+            params = frozenset(k.arg for k in node.keywords if k.arg)
 
         if sid not in taint_cache:
             taint_cache[sid] = _tainted_vars(scope)
-        p_nodes, _ = _prompt_nodes(node, api, resolve)
         tainted = _prompt_is_tainted(p_nodes, taint_cache[sid])
 
         line = getattr(node, "lineno", 0)
         snippet = source_lines[line - 1].strip() if 0 < line <= len(source_lines) else ""
-        model_kw = _kw(node, "model")
-        model = _const_str(resolve(model_kw)) if model_kw is not None else None
+        loop_kind = _loop_kind(node, parents)
         calls.append(
             LLMCall(
                 node=node,
@@ -624,11 +819,12 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str]) -> list[LLMCall]:
                 prompt_text=text,
                 prompt_static=static,
                 prompt_resolved=resolved,
-                loop_kind=_loop_kind(node, parents),
+                loop_kind=loop_kind,
+                loop_concurrent=(loop_kind == "batchable" and _is_concurrent_dispatch(node, parents)),
                 tainted=tainted,
                 snippet=snippet,
-                model=model.strip() if model else None,
-                params=frozenset(k.arg for k in node.keywords if k.arg),
+                model=model,
+                params=params,
             )
         )
     return calls
