@@ -104,13 +104,21 @@ def analyze_file(path: Path, config: Config) -> list[Finding]:
     else:
         try:
             tree = ast.parse(source, filename=str(path))
-        except (SyntaxError, ValueError):
+        except (SyntaxError, ValueError, RecursionError):
             return []  # not our job to report parse errors; stay quiet
-        calls = find_llm_calls(tree, lines, config.llm_calls)
+        try:
+            calls = find_llm_calls(tree, lines, config.llm_calls)
+        except Exception:
+            return []  # one pathological file must never abort the whole scan
 
     findings: list[Finding] = []
     seen: set[tuple] = set()
-    display_path = str(path)
+    # Normalize to a cwd-relative path so a baseline written locally matches CI
+    # (where the repo lives under a different absolute prefix).
+    try:
+        display_path = str(path.resolve().relative_to(Path.cwd()))
+    except (ValueError, OSError):
+        display_path = str(path)
     for call in calls:
         node_start = getattr(call.node, "lineno", call.line)
         node_end = getattr(call.node, "end_lineno", node_start) or node_start
