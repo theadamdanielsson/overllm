@@ -3,6 +3,15 @@
 Notable changes per release. Versions follow [semantic versioning](https://semver.org);
 dates are the tag date.
 
+## 0.6.2 — 2026-07-04
+
+Test-only fix; the 0.6.1 runtime code is unchanged. The deep-recursion regression
+test parsed a pathologically nested prompt, which tripped CPython's own parser
+recursion limit during AST construction on Python 3.11 (a parser limit, not an
+overllm one, so CI was red there). The test now builds the AST directly, so it
+exercises overllm's prompt-walk depth guard on every version. CI is green across
+3.9–3.13.
+
 ## 0.6.1 — 2026-07-04
 
 Correctness patch from an adversarial red-team of 0.6.0. **If you ran
