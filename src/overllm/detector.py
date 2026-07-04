@@ -475,10 +475,44 @@ def _prompt_is_tainted(nodes: list[ast.expr], tainted: set[str]) -> bool:
 
 # --- Import / variable context ----------------------------------------------
 
+# Runnable composition / binding methods. A var derived from a known model via
+# one of these is still an LLM object -- this is what lets us follow LangChain
+# `model.with_structured_output(...)` / `.bind_tools(...)` without treating every
+# Runnable (prompts, parsers, retrievers) as an LLM.
+_BIND_METHODS = frozenset({
+    "with_structured_output", "bind_tools", "bind", "with_config", "with_retry",
+    "with_fallbacks", "configurable_fields", "configurable_alternatives",
+    "with_types", "with_listeners", "as_tool",
+})
+
+
 class _Context:
+    """The matured definition of an LLM call: not just a fixed set of call SHAPES,
+    but any invocation on an object whose data-flow provably composes a known
+    model -- through construction, an LCEL `|` pipe, a bind/config method, or an
+    alias. The seed is still a known model class (so a bare prompt/parser chain is
+    NOT an LLM object), which keeps the recall win precise."""
+
     def __init__(self) -> None:
         self.free_llm_names: set[str] = set()   # bare names that are LLM free funcs
-        self.llm_vars: set[str] = set()         # dotted names bound to an LLM object
+        self.llm_vars: set[str] = set()         # dotted names that compose a model
+
+    def _is_llm_expr(self, v: ast.expr | None, depth: int = 0) -> bool:
+        if v is None or depth > 40:
+            return False
+        if isinstance(v, ast.Call):
+            if _ctor_name(v) in LLM_CONSTRUCTORS:
+                return True
+            f = v.func
+            if isinstance(f, ast.Attribute) and f.attr in _BIND_METHODS:
+                return self._is_llm_expr(f.value, depth + 1)  # model.with_structured_output(...)
+            return False
+        if isinstance(v, ast.BinOp) and isinstance(v.op, ast.BitOr):  # LCEL: a | model | b
+            return self._is_llm_expr(v.left, depth + 1) or self._is_llm_expr(v.right, depth + 1)
+        if isinstance(v, (ast.Name, ast.Attribute)):
+            d = _dotted(v)
+            return bool(d) and d in self.llm_vars  # alias of a tracked chain/model
+        return False
 
     def scan(self, tree: ast.AST) -> None:
         for node in ast.walk(tree):
@@ -488,14 +522,20 @@ class _Context:
                     mods = LLM_FREE_FUNCS.get(fn)
                     if mods and node.module.split(".")[0] in mods:
                         self.free_llm_names.add(alias.asname or fn)
-            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-                value = node.value
-                if isinstance(value, ast.Call) and _ctor_name(value) in LLM_CONSTRUCTORS:
-                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                    for t in targets:
-                        d = _dotted(t)
-                        if d:
-                            self.llm_vars.add(d)
+        # Assignments to a fixed point, so a chain built from an earlier chain
+        # (or a forward reference) is still recognised.
+        for _ in range(3):
+            before = len(self.llm_vars)
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                    if self._is_llm_expr(node.value):
+                        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                        for t in targets:
+                            d = _dotted(t)
+                            if d:
+                                self.llm_vars.add(d)
+            if len(self.llm_vars) == before:
+                break
 
 
 # --- Classification ----------------------------------------------------------
