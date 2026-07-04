@@ -114,6 +114,9 @@ class LLMCall:
     snippet: str = ""
     model: str | None = None      # the model id, when it is a plain string literal
     params: frozenset = field(default_factory=frozenset)  # keyword arg names on the call
+    json_object_mode: bool = False  # response_format={"type": "json_object"} was requested
+    all_text: str = ""            # lowercased text of ALL message roles (for the json-mode check)
+    all_text_static: bool = False  # every message content is a statically-readable literal
 
 
 # --- AST helpers -------------------------------------------------------------
@@ -372,6 +375,56 @@ def _extract_prompt(call: ast.Call, api: str, resolve) -> tuple[str, bool, bool]
             texts.append(t)
         static = static and s
     return " ".join(texts).strip(), static, True
+
+
+def _json_object_mode(call: ast.Call, resolve) -> bool:
+    """True when the call requests response_format={"type": "json_object"}."""
+    rf = _kw(call, "response_format")
+    if rf is None:
+        return False
+    rf = resolve(rf)
+    if isinstance(rf, ast.Dict):
+        return _const_str(_dict_get(rf, "type")) == "json_object"
+    return False
+
+
+def _all_messages_text(call: ast.Call, resolve) -> tuple[str, bool]:
+    """Lowercased text of ALL message roles + system/instructions, and whether
+    every piece is a statically-readable literal (so the ABSENCE of a word is
+    provable, not merely unobserved)."""
+    parts: list[str] = []
+    static = True
+    for name in ("system", "instructions"):
+        v = _kw(call, name)
+        if v is not None:
+            t, s = _literal_text_and_static(resolve(v), resolve)
+            parts.append(t)
+            static = static and s
+    msgs = _kw(call, "messages")
+    if msgs is not None:
+        msgs = resolve(msgs)
+        if not isinstance(msgs, ast.List):
+            return "", False
+        for el in msgs.elts:
+            el = resolve(el)
+            if not isinstance(el, ast.Dict):
+                return "", False
+            content = _dict_get(el, "content")
+            if content is None:
+                return "", False
+            t, s = _literal_text_and_static(resolve(content), resolve)
+            parts.append(t)
+            static = static and s
+    else:
+        single = _kw(call, "prompt") or _kw(call, "input")
+        if single is None and call.args:
+            single = call.args[0]
+        if single is None:
+            return "", False
+        t, s = _literal_text_and_static(resolve(single), resolve)
+        parts.append(t)
+        static = static and s
+    return " ".join(parts).strip(), static
 
 
 # --- Taint: untrusted external input flowing into a prompt --------------------
@@ -833,6 +886,7 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str], allow: tuple = ()) ->
                 r = _resolve(r, _mod)
             return r
 
+        json_mode, all_text, all_static = False, "", False
         if wrapper is not None:
             # A call to the project's own wrapper: inline the call-site args into
             # the wrapper's inner SDK call, resolved in the CALL SITE's scope.
@@ -847,6 +901,9 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str], allow: tuple = ()) ->
             m = _const_str(resolve(model_kw)) if model_kw is not None else None
             model = m.strip() if m else None
             params = frozenset(k.arg for k in node.keywords if k.arg)
+            json_mode = _json_object_mode(node, resolve)
+            if json_mode:
+                all_text, all_static = _all_messages_text(node, resolve)
 
         if sid not in taint_cache:
             taint_cache[sid] = _tainted_vars(scope)
@@ -878,6 +935,9 @@ def find_llm_calls(tree: ast.AST, source_lines: list[str], allow: tuple = ()) ->
                 snippet=snippet,
                 model=model,
                 params=params,
+                json_object_mode=json_mode,
+                all_text=all_text,
+                all_text_static=all_static,
             )
         )
     return calls
