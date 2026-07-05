@@ -227,10 +227,6 @@ Then ask the agent things like "scan this repo for unnecessary LLM calls" or "is
 
 AI reviewers and AI-slop linters look at the code the model produced: comments, dead code, structure. None of them ask the question overllm asks, which is whether you needed the model at all. It is a different axis, and it is one plain static analysis can answer with high precision and zero cost.
 
-## overloop, for your running agent
-
-overllm reads your code at rest. Its runtime sibling, [overloop](https://github.com/theadamdanielsson/overloop), is a Claude Code hook that catches the same waste while an agent runs — the tool calls it repeats, the files it re-reads, the oversized output it floods context with. overllm catches the calls you didn't need; overloop catches the ones your agent runs twice. Two halves of the same idea.
-
 ## Contributing
 
 The most useful thing you can send is a false positive: a real line of code where overllm flags a call it should not. A linter is only worth running if it is right, so one concrete bad flag is worth more than a feature request. [CONTRIBUTING.md](CONTRIBUTING.md) covers how to report one and how to run the tests.
